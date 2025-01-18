@@ -35,31 +35,131 @@ You can see the script in action with the Free Network Monitor Assistant at [htt
 
 ### Prerequisites
 Ensure you have the following installed:
-- Python 3.8+
-- Pip
+- Python 3.8+ (Check with `python3 --version`)
+- Pip (Check with `pip --version`)
 - A CUDA-enabled GPU (optional, for faster inference)
 
 ### Steps
 
-1. Clone the repository:
+1. **Clone the repository**:
    ```bash
    git clone https://github.com/yourusername/NetworkMonitorKokoro.git
    cd NetworkMonitorKokoro
    ```
 
-2. Install the required dependencies:
+2. **Create and activate a virtual environment**:
+   - **On Linux/macOS**:
+     ```bash
+     python3 -m venv venv
+     source venv/bin/activate
+     ```
+   - **On Windows**:
+     ```bash
+     python -m venv venv
+     venv\Scripts\activate
+     ```
+
+   Once activated, you should see `(venv)` at the start of your command prompt, indicating the virtual environment is active.
+
+3. **Install the required dependencies**:
    ```bash
    pip install -r requirements.txt
    ```
 
-3. Set up the models:
+4. **Set up the models**:
    - The Kokoro T2S model and OpenAI Whisper S2T model will be downloaded automatically during runtime.
 
-4. Start the Flask server:
+5. **Start the Flask server**:
    ```bash
    python app.py
    ```
 
+6. **Deactivate the virtual environment** (optional):
+   ```bash
+   deactivate
+   ```
+
+---
+
+## Running as a Linux Service
+
+To run **NetworkMonitorKokoro** as a systemd service on Linux, follow these steps:
+
+1. **Download the repository**:
+   Clone the repository to a directory where you want to run the service:
+   ```bash
+   git clone https://github.com/yourusername/NetworkMonitorKokoro.git
+   cd NetworkMonitorKokoro
+   ```
+
+2. **Create and activate a virtual environment**:
+   Create the virtual environment inside the directory:
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   ```
+
+3. **Install dependencies**:
+   Install the required Python packages in the virtual environment:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Create a systemd service file**:
+   Open a text editor to create the service file:
+   ```bash
+   sudo nano /etc/systemd/system/networkmonitor-kokoro.service
+   ```
+
+   Add the following content:
+   ```ini
+   [Unit]
+   Description=NetworkMonitorKokoro Service
+   After=network.target
+
+   [Service]
+   User=yourusername
+   WorkingDirectory=/path/to/NetworkMonitorKokoro
+   ExecStart=/path/to/NetworkMonitorKokoro/venv/bin/python /path/to/NetworkMonitorKokoro/app.py
+   Restart=always
+   Environment=PYTHONUNBUFFERED=1
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+   Replace `/path/to/NetworkMonitorKokoro` with the full path to the directory where the repository was cloned and the virtual environment was created. Replace `yourusername` with your Linux username.
+
+5. **Reload systemd**:
+   Reload the systemd configuration to recognize the new service:
+   ```bash
+   sudo systemctl daemon-reload
+   ```
+
+6. **Start the service**:
+   Start the service:
+   ```bash
+   sudo systemctl start networkmonitor-kokoro
+   ```
+
+7. **Enable the service to start on boot**:
+   Enable the service so it starts automatically when the system boots:
+   ```bash
+   sudo systemctl enable networkmonitor-kokoro
+   ```
+
+8. **Check the service status**:
+   Check the status of the service to ensure it’s running correctly:
+   ```bash
+   sudo systemctl status networkmonitor-kokoro
+   ```
+
+---
+
+### Important Notes
+
+- The virtual environment (`venv`) must reside inside the `NetworkMonitorKokoro` directory to keep the service self-contained.
+- The `WorkingDirectory` in the service file ensures that the Flask application runs from the correct location and uses the virtual environment.
 ---
 
 ## Usage
@@ -116,54 +216,6 @@ curl -X POST \
 
 ---
 
-## Running as a Linux Service
-
-To run NetworkMonitorKokoro as a systemd service on Linux, follow these steps:
-
-1. Create a service file:
-   ```bash
-   sudo nano /etc/systemd/system/networkmonitor-kokoro.service
-   ```
-
-2. Add the following content to the file:
-   ```ini
-   [Unit]
-   Description=NetworkMonitorKokoro Service
-   After=network.target
-
-   [Service]
-   User=yourusername
-   WorkingDirectory=/path/to/NetworkMonitorKokoro
-   ExecStart=/usr/bin/python3 /path/to/NetworkMonitorKokoro/app.py
-   Restart=always
-
-   [Install]
-   WantedBy=multi-user.target
-   ```
-
-   Replace `/path/to/NetworkMonitorKokoro` with the full path to the cloned repository and `yourusername` with your Linux username.
-
-3. Reload systemd to recognize the new service:
-   ```bash
-   sudo systemctl daemon-reload
-   ```
-
-4. Start the service:
-   ```bash
-   sudo systemctl start networkmonitor-kokoro
-   ```
-
-5. Enable the service to start on boot:
-   ```bash
-   sudo systemctl enable networkmonitor-kokoro
-   ```
-
-6. Check the service status:
-   ```bash
-   sudo systemctl status networkmonitor-kokoro
-   ```
-
----
 
 ## Dependencies
 
