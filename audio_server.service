@@ -3,7 +3,7 @@ Description=Audio Server
 After=network.target
 
 [Service]
-ExecStart=/home/mahadeva/code/services/kokoro/env/bin/python3 /home/mahadeva/code/services/kokoro/audio_server.py
+ExecStart=/home/mahadeva/code/services/kokoro/env/bin/python3 /home/mahadeva/code/services/kokoro/app.py
 WorkingDirectory=/home/mahadeva/code/services/kokoro
 Restart=always
 User=mahadeva
