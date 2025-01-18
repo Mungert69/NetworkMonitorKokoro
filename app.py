@@ -95,14 +95,6 @@ def initialize_models():
         raise
 import tempfile
 
-def save_to_secure_tempfile(file):
-    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav", dir="/tmp")
-    try:
-        file.save(tmp_file.name)
-        return tmp_file.name
-    finally:
-        tmp_file.close()  # Ensure the file is properly closed
-
         
 def validate_audio_file(file):
     if not isinstance(file, werkzeug.datastructures.FileStorage):
