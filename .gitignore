@@ -355,3 +355,4 @@ nohup.out
 /.mono
 appsettings*
 .cache
+venv
