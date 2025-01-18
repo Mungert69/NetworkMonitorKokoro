@@ -1,0 +1,10 @@
+flask
+flask-cors
+transformers
+librosa
+torch
+numpy
+onnxruntime
+soundfile
+huggingface_hub
+
