@@ -30,12 +30,11 @@ You can see the script in action with the Free Network Monitor Assistant at [htt
   - `/transcribe_audio`: Transcribe audio into text.
 
 ---
-
 ## Installation
 
 ### Prerequisites
 Ensure you have the following installed:
-- Python 3.8+ (Check with `python3 --version`)
+- Python 3.8+ (Check with `python3 --version` or `python --version`)
 - Pip (Check with `pip --version`)
 - A CUDA-enabled GPU (optional, for faster inference)
 
@@ -55,30 +54,32 @@ Ensure you have the following installed:
      ```
    - **On Windows**:
      ```bash
-     python -m venv venv
+     pythons -m venv venv
      venv\Scripts\activate
      ```
 
    Once activated, you should see `(venv)` at the start of your command prompt, indicating the virtual environment is active.
 
 3. **Install the required dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+   - **Run the installation script** (cross-platform):
+     ```bash
+     pythons install_dependencies.py
+     ```
+   This script detects your operating system and installs the dependencies accordingly for Linux, Windows, and macOS.
 
 4. **Set up the models**:
    - The Kokoro T2S model and OpenAI Whisper S2T model will be downloaded automatically during runtime.
 
 5. **Start the Flask server**:
    ```bash
-   python app.py
+   pythons app.py
    ```
 
 6. **Deactivate the virtual environment** (optional):
    ```bash
    deactivate
    ```
-
+   
 ---
 
 ## Running as a Linux Service
