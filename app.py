@@ -11,11 +11,15 @@ import uuid
 import logging
 from flask_cors import CORS
 import threading
+import werkzeug
+import tempfile
 from huggingface_hub import snapshot_download
+from logging.handlers import RotatingFileHandler
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
@@ -89,10 +93,49 @@ def initialize_models():
     except Exception as e:
         logger.error(f"Error initializing models: {str(e)}")
         raise
+import tempfile
+
+def save_to_secure_tempfile(file):
+    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav", dir="/tmp")
+    try:
+        file.save(tmp_file.name)
+        return tmp_file.name
+    finally:
+        tmp_file.close()  # Ensure the file is properly closed
+
+        
+def validate_audio_file(file):
+    if not isinstance(file, werkzeug.datastructures.FileStorage):
+        raise ValueError("Invalid file type")
+    if file.content_type not in ["audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp3"]:
+        raise ValueError("Unsupported file type")
+    file.seek(0, os.SEEK_END)
+    file_size = file.tell()
+    file.seek(0)  # Reset file pointer
+    if file_size > 10 * 1024 * 1024:  # 10 MB limit
+        raise ValueError("File is too large (max 10 MB)")
+        
+def validate_text_input(text):
+    if not isinstance(text, str):
+        raise ValueError("Text input must be a string")
+    if len(text.strip()) == 0:
+        raise ValueError("Text input cannot be empty")
+    if len(text) > 1024:  # Limit to 1024 characters
+        raise ValueError("Text input is too long (max 1024 characters)")
 
 
 # Initialize models
 initialize_models()
+
+# Health check endpoint
+@app.route('/health', methods=['GET'])
+def health_check():
+    try:
+        logger.debug(f"Request ID {g.request_id}: Health check requested")
+        return jsonify({"status": "healthy"}), 200
+    except Exception as e:
+        logger.error(f"Request ID {g.request_id}: Health check failed: {str(e)}")
+        return jsonify({"status": "unhealthy"}), 500
 
 @app.route('/generate_audio', methods=['POST'])
 def generate_audio():
@@ -102,6 +145,7 @@ def generate_audio():
             logger.debug("Received request to /generate_audio")
             data = request.json
             text = data['text']
+            validate_text_input(text)
             output_path = data.get('output', 'output_audio.wav')
             logger.debug(f"Text: {text}")
             logger.debug(f"Output path: {output_path}")
@@ -148,6 +192,7 @@ def transcribe_audio():
         try:
             logger.debug("Received request to /transcribe_audio")
             file = request.files['file']
+            validate_audio_file(file)
             # Generate a unique filename using uuid
             unique_filename = f"{uuid.uuid4().hex}_{file.filename}"
             audio_path = os.path.join("/tmp", unique_filename)
@@ -157,6 +202,7 @@ def transcribe_audio():
             # Load and preprocess audio
             logger.debug("Processing audio for transcription...")
             audio_array, sampling_rate = librosa.load(audio_path, sr=16000)
+
             input_features = processor(
                 audio_array,
                 sampling_rate=sampling_rate,
@@ -182,4 +228,5 @@ def transcribe_audio():
 if __name__ == '__main__':
     logger.info("Starting Flask server on 0.0.0.0:5000")
     app.run(host='0.0.0.0', port=5000)
+
 

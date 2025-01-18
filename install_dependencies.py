@@ -12,7 +12,9 @@ common_requirements = [
     "soundfile",
     "huggingface_hub",
     "phonemizer",
-    "munch"
+    "munch",
+    "werkzeug",
+    "tempfile"
 ]
 
 # Function to run pip install
