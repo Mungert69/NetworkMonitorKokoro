@@ -120,7 +120,7 @@ To run **NetworkMonitorKokoro** as a systemd service on Linux, follow these step
    [Service]
    User=yourusername
    WorkingDirectory=/path/to/NetworkMonitorKokoro
-   ExecStart=/path/to/NetworkMonitorKokoro/venv/bin/python /path/to/NetworkMonitorKokoro/app.py
+   ExecStart=/path/to/NetworkMonitorKokoro/venv/bin/python3 /path/to/NetworkMonitorKokoro/app.py
    Restart=always
    Environment=PYTHONUNBUFFERED=1
 
