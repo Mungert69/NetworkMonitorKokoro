@@ -1,0 +1,13 @@
+[Unit]
+Description=Audio Server
+After=network.target
+
+[Service]
+ExecStart=/home/mahadeva/code/services/kokoro/env/bin/python3 /home/mahadeva/code/services/kokoro/audio_server.py
+WorkingDirectory=/home/mahadeva/code/services/kokoro
+Restart=always
+User=mahadeva
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

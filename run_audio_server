@@ -1,0 +1,3 @@
+source /home/mahadeva/code/kokoro/env/bin/activate
+python3 audio_server.py
+
