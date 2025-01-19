@@ -13,7 +13,7 @@ alphabet_map = {
     "E": " Eee ",
     "F": " Eff ",
     "G": " Jee ",
-    "H": " Eich ",
+    "H": " Aitch ",
     "I": " Eye ",
     "J": " Jay ",
     "K": " Kay ",
