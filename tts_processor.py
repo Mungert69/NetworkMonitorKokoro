@@ -135,21 +135,19 @@ def expand_contractions(text):
         "here'd": "here would"
     }
 
-    # Replace contractions using a regex
+    # Regex to match contractions
+    pattern = re.compile(r'\b(?:' + '|'.join(re.escape(key) for key in contractions.keys()) + r')\b', re.IGNORECASE)
+
+    # Replace contractions with their expanded forms
     def replace(match):
-        # Match the contraction case-insensitively
         contraction = match.group(0)
         expanded = contractions.get(contraction.lower(), contraction)
-        # Return the expanded form, preserving the original case
-        if contraction.islower():
-            return expanded.lower()
-        elif contraction.istitle():
-            return expanded.capitalize()
-        else:
-            return expanded
+        if contraction.istitle():
+            return expanded.capitalize()  # Handle title case
+        elif contraction.isupper():
+            return expanded.upper()      # Handle uppercase
+        return expanded                 # Default: lowercase
 
-    # Match contractions in the text
-    pattern = re.compile(r'\b(?:' + '|'.join(re.escape(key) for key in contractions.keys()) + r')\b', re.IGNORECASE)
     return pattern.sub(replace, text)
 
 
