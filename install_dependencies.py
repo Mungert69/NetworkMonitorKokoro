@@ -1,5 +1,6 @@
 import subprocess
 import sys
+import platform
 
 # Define the common requirements
 common_requirements = [
@@ -8,7 +9,6 @@ common_requirements = [
     "transformers",
     "librosa",
     "numpy",
-    "onnxruntime",
     "soundfile",
     "huggingface_hub",
     "phonemizer",
@@ -31,7 +31,11 @@ def install_package(package, extra_args=None):
 
 # Main installation logic
 def main():
-    print("Select installation mode:")
+    print("Detecting operating system...")
+    os_type = platform.system()
+    print(f"Operating system detected: {os_type}")
+
+    print("\nSelect installation mode:")
     print("1. CPU (no GPU dependencies)")
     print("2. GPU (requires CUDA-compatible hardware and drivers)")
 
@@ -39,22 +43,22 @@ def main():
 
     if choice == "1":
         print("\nInstalling for CPU...")
-        # Install common dependencies
         for req in common_requirements:
             print(f"Installing {req}...")
             install_package(req)
-        # Install PyTorch for CPU
         print("Installing torch (CPU-only)...")
         install_package("torch", ["--index-url", "https://download.pytorch.org/whl/cpu"])
+        print("Installing onnxruntime (CPU-only)...")
+        install_package("onnxruntime")
     elif choice == "2":
         print("\nInstalling for GPU...")
-        # Install common dependencies
         for req in common_requirements:
             print(f"Installing {req}...")
             install_package(req)
-        # Install default PyTorch for GPU
         print("Installing torch (GPU)...")
         install_package("torch")
+        print("Installing onnxruntime-gpu...")
+        install_package("onnxruntime-gpu")
     else:
         print("\nInvalid choice. Exiting.")
         sys.exit(1)
