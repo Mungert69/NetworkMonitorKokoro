@@ -1,6 +1,7 @@
 # NetworkMonitorKokoro
 
 ## Overview
+
 NetworkMonitorKokoro is a Flask-based service that provides advanced text-to-speech (T2S) and speech-to-text (S2T) functionalities using state-of-the-art machine learning models:
 
 - **Text-to-Speech (T2S)**: Converts text input into high-quality synthesized speech using the Kokoro model.
@@ -30,13 +31,20 @@ You can see the script in action with the Free Network Monitor Assistant at [htt
   - `/transcribe_audio`: Transcribe audio into text.
 
 ---
+
 ## Installation
 
 ### Prerequisites
+
 Ensure you have the following installed:
+
 - Python 3.8+ (Check with `python3 --version` or `python --version`)
 - Pip (Check with `pip --version`)
 - A CUDA-enabled GPU (optional, for faster inference)
+- **System Dependencies** (Debian/Ubuntu):
+  ```bash
+  sudo apt-get install libsndfile1
+  ```
 
 ### Steps
 
@@ -54,7 +62,7 @@ Ensure you have the following installed:
      ```
    - **On Windows**:
      ```bash
-     pythons -m venv venv
+     python3 -m venv venv
      venv\Scripts\activate
      ```
 
@@ -63,7 +71,7 @@ Ensure you have the following installed:
 3. **Install the required dependencies**:
    - **Run the installation script** (cross-platform):
      ```bash
-     pythons install_dependencies.py
+     python3 install_dependencies.py
      ```
    This script detects your operating system and installs the dependencies accordingly for Linux, Windows, and macOS.
 
@@ -72,42 +80,38 @@ Ensure you have the following installed:
 
 5. **Start the Flask server**:
    ```bash
-   pythons app.py
+   python3 app.py
    ```
 
 6. **Deactivate the virtual environment** (optional):
    ```bash
    deactivate
    ```
-   
+
 ---
 
 ## Running as a Linux Service
 
 To run **NetworkMonitorKokoro** as a systemd service on Linux, follow these steps:
 
-1. **Download the repository**:
-   Clone the repository to a directory where you want to run the service:
+1. **Clone the repository**:
    ```bash
    git clone https://github.com/yourusername/NetworkMonitorKokoro.git
    cd NetworkMonitorKokoro
    ```
 
 2. **Create and activate a virtual environment**:
-   Create the virtual environment inside the directory:
    ```bash
    python3 -m venv venv
    source venv/bin/activate
    ```
 
 3. **Install dependencies**:
-   Install the required Python packages in the virtual environment:
    ```bash
-   pip install -r requirements.txt
+   python3 install_dependencies.py
    ```
 
 4. **Create a systemd service file**:
-   Open a text editor to create the service file:
    ```bash
    sudo nano /etc/systemd/system/networkmonitor-kokoro.service
    ```
@@ -131,36 +135,31 @@ To run **NetworkMonitorKokoro** as a systemd service on Linux, follow these step
 
    Replace `/path/to/NetworkMonitorKokoro` with the full path to the directory where the repository was cloned and the virtual environment was created. Replace `yourusername` with your Linux username.
 
-5. **Reload systemd**:
-   Reload the systemd configuration to recognize the new service:
+5. **Set proper permissions**:
+   ```bash
+   sudo chmod 644 /etc/systemd/system/networkmonitor-kokoro.service
+   ```
+
+6. **Reload systemd**:
    ```bash
    sudo systemctl daemon-reload
    ```
 
-6. **Start the service**:
-   Start the service:
+7. **Start the service**:
    ```bash
    sudo systemctl start networkmonitor-kokoro
    ```
 
-7. **Enable the service to start on boot**:
-   Enable the service so it starts automatically when the system boots:
+8. **Enable the service to start on boot**:
    ```bash
    sudo systemctl enable networkmonitor-kokoro
    ```
 
-8. **Check the service status**:
-   Check the status of the service to ensure it’s running correctly:
+9. **Check the service status**:
    ```bash
    sudo systemctl status networkmonitor-kokoro
    ```
 
----
-
-### Important Notes
-
-- The virtual environment (`venv`) must reside inside the `NetworkMonitorKokoro` directory to keep the service self-contained.
-- The `WorkingDirectory` in the service file ensures that the Flask application runs from the correct location and uses the virtual environment.
 ---
 
 ## Usage
@@ -181,7 +180,7 @@ To run **NetworkMonitorKokoro** as a systemd service on Linux, follow these step
   ```json
   {
     "status": "success",
-    "output_path": "/absolute/path/to/ave/file/to/output_audio.wav"
+    "output_path": "/absolute/path/to/save/file/to/<hash>.wav"
   }
   ```
 
@@ -205,18 +204,17 @@ To run **NetworkMonitorKokoro** as a systemd service on Linux, follow these step
 curl -X POST \
      -H "Content-Type: application/json" \
      -d '{"text": "Hello, world!","output_dir":"/tmp"}' \
-     http://localhost:5000/generate_audio
+     http://127.0.0.1:5000/generate_audio
 ```
 
 #### Transcribe Audio
 ```bash
 curl -X POST \
-     -F "file=@path/to/your/audio/file.wav" \
-     http://localhost:5000/transcribe_audio
+     -F "file=@sample_audio.wav" \
+     http://127.0.0.1:5000/transcribe_audio
 ```
 
 ---
-
 
 ## Dependencies
 
@@ -257,4 +255,3 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 ## Contact
 
 For questions or support, please open an issue or contact [support@mahadeva.co.uk](mailto:support@mahadeva.co.uk).
-
