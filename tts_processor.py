@@ -55,8 +55,6 @@ def preprocess_all(string):
 
     return string
 
-import re
-
 def expand_contractions(text):
     # Comprehensive dictionary of contractions and their expansions
     contractions = {
