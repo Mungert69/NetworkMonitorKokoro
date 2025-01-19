@@ -3,10 +3,10 @@ Description=Audio Server
 After=network.target
 
 [Service]
-ExecStart=/home/mahadeva/code/services/kokoro/venv/bin/python3 /home/mahadeva/code/services/kokoro/app.py
-WorkingDirectory=/home/mahadeva/code/services/kokoro
+ExecStart=/home/audioservice/code/services/kokoro/venv/bin/python3 /home/audioservice/code/services/kokoro/app.py
+WorkingDirectory=/home/audioservice/code/services/kokoro
 Restart=always
-User=mahadeva
+User=audioservice
 Environment=PYTHONUNBUFFERED=1
 
 [Install]

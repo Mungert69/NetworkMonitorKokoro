@@ -1,0 +1,17 @@
+[Unit]
+Description=Audio Wav File Server
+After=network.target
+
+[Service]
+ExecStart=/home/audioservice/code/services/kokoro/venv/bin/python3 /home/audioservice/code/services/kokoro/serv_wav_files.py
+WorkingDirectory=/home/audioservice/code/services/kokoro
+Restart=always
+User=audioservice
+Environment=SERVE_DIR=/home/audioservice/code/securefiles/dev/output_audio
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
