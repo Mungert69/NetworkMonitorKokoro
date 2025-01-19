@@ -144,10 +144,31 @@ def generate_audio():
             logger.debug("Received request to /generate_audio")
             data = request.json
             text = data['text']
+            output_dir = data.get('output_dir')  # Updated parameter name
+
             validate_text_input(text)
-            output_path = data.get('output', 'output_audio.wav')
             logger.debug(f"Text: {text}")
-            logger.debug(f"Output path: {output_path}")
+            if not output_dir:
+                raise ValueError("Output directory is required but not provided")
+
+            # Ensure output_dir is an absolute path and valid
+            if not os.path.isabs(output_dir):
+                raise ValueError("Output directory must be an absolute path")
+            if not os.path.exists(output_dir):
+                raise ValueError(f"Output directory does not exist: {output_dir}")
+
+            # Generate a unique hash for the text
+            text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+            hashed_file_name = f"{text_hash}.wav"
+            cached_file_path = os.path.join(output_dir, hashed_file_name)
+            logger.debug(f"Generated hash for text: {text_hash}")
+            logger.debug(f"Output directory: {output_dir}")
+            logger.debug(f"Cached file path: {cached_file_path}")
+
+            # Check if cached file exists
+            if os.path.exists(cached_file_path):
+                logger.info(f"Returning cached audio for text: {text}")
+                return jsonify({"status": "success", "output_path": cached_file_path})
 
             # Tokenize text
             logger.debug("Tokenizing text...")
@@ -177,9 +198,9 @@ def generate_audio():
 
             # Save audio
             logger.debug(f"Saving audio to {output_path}...")
-            sf.write(output_path, audio, 24000)
+            sf.write(cached_file_path, audio, 24000)
             logger.info(f"Audio saved successfully to {output_path}")
-            return jsonify({"status": "success", "output_path": output_path})
+            return jsonify({"status": "success", "output_path": cached_file_path})
         except Exception as e:
             logger.error(f"Error generating audio: {str(e)}")
             return jsonify({"status": "error", "message": str(e)}), 500
