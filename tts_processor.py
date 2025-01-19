@@ -56,7 +56,7 @@ def preprocess_all(string):
     return string
 
 def expand_contractions(text):
-    # Comprehensive dictionary of contractions and their expansions
+    # Dictionary of contractions and their expanded forms
     contractions = {
         "I'm": "I am",
         "you're": "you are",
@@ -108,43 +108,21 @@ def expand_contractions(text):
         "why's": "why is",
         "how's": "how is",
         "there's": "there is",
-        "here's": "here is",
-        "I'd've": "I would have",
-        "you'd've": "you would have",
-        "he'd've": "he would have",
-        "she'd've": "she would have",
-        "we'd've": "we would have",
-        "they'd've": "they would have",
-        "it'd've": "it would have",
-        "could've": "could have",
-        "should've": "should have",
-        "would've": "would have",
-        "might've": "might have",
-        "must've": "must have",
-        "needn't": "need not",
-        "shan't": "shall not",
-        "who'd": "who would",
-        "what'd": "what did",
-        "where'd": "where did",
-        "when'd": "when did",
-        "why'd": "why did",
-        "how'd": "how did",
-        "there'd": "there would",
-        "here'd": "here would"
+        "here's": "here is"
     }
 
-    # Regex to match contractions
-    pattern = re.compile(r'\b(?:' + '|'.join(re.escape(key) for key in contractions.keys()) + r')\b', re.IGNORECASE)
+    # Compile a regex pattern to match all contractions
+    pattern = re.compile(r'\b(' + '|'.join(re.escape(key) for key in contractions.keys()) + r')\b', re.IGNORECASE)
 
-    # Replace contractions with their expanded forms
+    # Function to replace contractions with their expansions
     def replace(match):
         contraction = match.group(0)
-        expanded = contractions.get(contraction.lower(), contraction)
+        expanded = contractions.get(contraction.lower())
         if contraction.istitle():
-            return expanded.capitalize()  # Handle title case
+            return expanded.capitalize()  # Preserve title case
         elif contraction.isupper():
-            return expanded.upper()      # Handle uppercase
-        return expanded                 # Default: lowercase
+            return expanded.upper()      # Preserve upper case
+        return expanded                 # Default: lower case
 
     return pattern.sub(replace, text)
 
