@@ -39,6 +39,7 @@ def preprocess_all(string):
     # the order for some of these matter
     # For example, you need to remove the commas in numbers before expanding them
     string = normalize_dates(string)
+    string = expand_contractions(string)
     string = replace_invalid_chars(string)
     string = replace_numbers(string)
 
@@ -53,6 +54,104 @@ def preprocess_all(string):
     string = clean_whitespace(string)
 
     return string
+
+import re
+
+def expand_contractions(text):
+    # Comprehensive dictionary of contractions and their expansions
+    contractions = {
+        "I'm": "I am",
+        "you're": "you are",
+        "he's": "he is",
+        "she's": "she is",
+        "it's": "it is",
+        "we're": "we are",
+        "they're": "they are",
+        "I've": "I have",
+        "you've": "you have",
+        "we've": "we have",
+        "they've": "they have",
+        "I'll": "I will",
+        "you'll": "you will",
+        "he'll": "he will",
+        "she'll": "she will",
+        "it'll": "it will",
+        "we'll": "we will",
+        "they'll": "they will",
+        "I'd": "I would",
+        "you'd": "you would",
+        "he'd": "he would",
+        "she'd": "she would",
+        "we'd": "we would",
+        "they'd": "they would",
+        "isn't": "is not",
+        "aren't": "are not",
+        "wasn't": "was not",
+        "weren't": "were not",
+        "haven't": "have not",
+        "hasn't": "has not",
+        "hadn't": "had not",
+        "won't": "will not",
+        "wouldn't": "would not",
+        "don't": "do not",
+        "doesn't": "does not",
+        "didn't": "did not",
+        "can't": "cannot",
+        "couldn't": "could not",
+        "shouldn't": "should not",
+        "mightn't": "might not",
+        "mustn't": "must not",
+        "let's": "let us",
+        "that's": "that is",
+        "who's": "who is",
+        "what's": "what is",
+        "where's": "where is",
+        "when's": "when is",
+        "why's": "why is",
+        "how's": "how is",
+        "there's": "there is",
+        "here's": "here is",
+        "I'd've": "I would have",
+        "you'd've": "you would have",
+        "he'd've": "he would have",
+        "she'd've": "she would have",
+        "we'd've": "we would have",
+        "they'd've": "they would have",
+        "it'd've": "it would have",
+        "could've": "could have",
+        "should've": "should have",
+        "would've": "would have",
+        "might've": "might have",
+        "must've": "must have",
+        "needn't": "need not",
+        "shan't": "shall not",
+        "who'd": "who would",
+        "what'd": "what did",
+        "where'd": "where did",
+        "when'd": "when did",
+        "why'd": "why did",
+        "how'd": "how did",
+        "there'd": "there would",
+        "here'd": "here would"
+    }
+
+    # Replace contractions using a regex
+    def replace(match):
+        # Match the contraction case-insensitively
+        contraction = match.group(0)
+        expanded = contractions.get(contraction.lower(), contraction)
+        # Return the expanded form, preserving the original case
+        if contraction.islower():
+            return expanded.lower()
+        elif contraction.istitle():
+            return expanded.capitalize()
+        else:
+            return expanded
+
+    # Match contractions in the text
+    pattern = re.compile(r'\b(?:' + '|'.join(re.escape(key) for key in contractions.keys()) + r')\b', re.IGNORECASE)
+    return pattern.sub(replace, text)
+
 
 def add_ordinal_suffix(day):
     """Adds ordinal suffix to a day (e.g., 13 -> 13th)."""
@@ -103,8 +202,7 @@ def replace_invalid_chars(string):
     string = remove_surrounded_chars(string)
     string = string.replace('"', '')
     string = string.replace('`', '')
-      # Replace invalid single quotes, but preserve contractions
-    string = re.sub(r"(?<!\w)'|'(?!\w)", "", string)  # Removes single quotes not part of contractions
+    string = string.replace("'", "")
     string = string.replace('\u201D', '').replace('\u201C', '')  # right and left quote
     string = string.replace('\u201F', '')  # italic looking quote
     string = string.replace('\n', ' ')
