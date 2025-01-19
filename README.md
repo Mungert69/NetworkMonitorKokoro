@@ -174,14 +174,14 @@ To run **NetworkMonitorKokoro** as a systemd service on Linux, follow these step
   ```json
   {
     "text": "Your text here",
-    "output": "output_audio.wav" // Optional
+    "output_dir": "/absolute/path/to/save/file/to/"
   }
   ```
 - **Response**:
   ```json
   {
     "status": "success",
-    "output_path": "output_audio.wav"
+    "output_path": "/absolute/path/to/ave/file/to/output_audio.wav"
   }
   ```
 
@@ -204,7 +204,7 @@ To run **NetworkMonitorKokoro** as a systemd service on Linux, follow these step
 ```bash
 curl -X POST \
      -H "Content-Type: application/json" \
-     -d '{"text": "Hello, world!"}' \
+     -d '{"text": "Hello, world!","output_dir":"/tmp"}' \
      http://localhost:5000/generate_audio
 ```
 
