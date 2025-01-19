@@ -14,7 +14,7 @@ import threading
 import werkzeug
 import tempfile
 from huggingface_hub import snapshot_download
-from logging.handlers import RotatingFileHandler
+from tts_processor import preprocess_all 
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -115,7 +115,14 @@ def validate_text_input(text):
     if len(text) > 1024:  # Limit to 1024 characters
         raise ValueError("Text input is too long (max 1024 characters)")
 
+def prepare_text_for_tts(text):
+    # Initialize the preprocessor
+    preprocessor = Preprocessor()
 
+    # Preprocess the text
+    processed_text = preprocessor.preprocess(text)
+
+    return processed_text
 # Initialize models
 initialize_models()
 
@@ -144,6 +151,7 @@ def generate_audio():
 
             # Tokenize text
             logger.debug("Tokenizing text...")
+            text = preprocess_all(text)
             from kokoro import phonemize, tokenize  # Import dynamically
             tokens = tokenize(phonemize(text, 'a'))
             logger.debug(f"Initial tokens: {tokens}")

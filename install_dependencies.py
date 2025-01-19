@@ -14,7 +14,9 @@ common_requirements = [
     "phonemizer",
     "munch",
     "werkzeug",
-    "tempfile"
+    "tempfile",
+    "num2words",
+    "dateparser"
 ]
 
 # Function to run pip install
