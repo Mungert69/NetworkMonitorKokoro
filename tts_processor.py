@@ -39,7 +39,6 @@ def preprocess_all(string):
     # the order for some of these matter
     # For example, you need to remove the commas in numbers before expanding them
     string = normalize_dates(string)
-    string = expand_contractions(string)
     string = replace_invalid_chars(string)
     string = replace_numbers(string)
 
