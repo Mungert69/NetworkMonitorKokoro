@@ -103,7 +103,8 @@ def replace_invalid_chars(string):
     string = remove_surrounded_chars(string)
     string = string.replace('"', '')
     string = string.replace('`', '')
-    string = string.replace("'","")
+      # Replace invalid single quotes, but preserve contractions
+    string = re.sub(r"(?<!\w)'|'(?!\w)", "", string)  # Removes single quotes not part of contractions
     string = string.replace('\u201D', '').replace('\u201C', '')  # right and left quote
     string = string.replace('\u201F', '')  # italic looking quote
     string = string.replace('\n', ' ')
