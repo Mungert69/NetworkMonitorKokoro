@@ -16,7 +16,8 @@ common_requirements = [
     "werkzeug",
     "tempfile",
     "num2words",
-    "dateparser"
+    "dateparser",
+    "hashlib"
 ]
 
 # Function to run pip install

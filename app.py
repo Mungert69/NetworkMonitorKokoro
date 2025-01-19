@@ -15,6 +15,7 @@ import werkzeug
 import tempfile
 from huggingface_hub import snapshot_download
 from tts_processor import preprocess_all 
+import hashlib
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -197,9 +198,9 @@ def generate_audio():
             logger.debug(f"Audio generated with shape: {audio.shape}")
 
             # Save audio
-            logger.debug(f"Saving audio to {output_path}...")
+            logger.debug(f"Saving audio to {cached_file_path}...")
             sf.write(cached_file_path, audio, 24000)
-            logger.info(f"Audio saved successfully to {output_path}")
+            logger.info(f"Audio saved successfully to {cached_file_path}")
             return jsonify({"status": "success", "output_path": cached_file_path})
         except Exception as e:
             logger.error(f"Error generating audio: {str(e)}")
