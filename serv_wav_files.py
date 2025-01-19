@@ -1,7 +1,9 @@
 from flask import Flask, send_from_directory, abort, request
 import os
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Configure the directory to serve files from
 SERVE_DIR = os.environ.get("SERVE_DIR", "./files")  # Default to './files' if not provided
