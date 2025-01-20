@@ -196,7 +196,7 @@ def replace_invalid_chars(string):
 def replace_numbers(string):
     string = convert_num_locale(string)
     string = replace_negative(string)
-    string = replace_roman(string)
+    #string = replace_roman(string)
     string = hyphen_range_to(string)
     string = num_to_words(string)
     return string

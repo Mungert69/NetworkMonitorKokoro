@@ -94,9 +94,17 @@ def initialize_models():
     except Exception as e:
         logger.error(f"Error initializing models: {str(e)}")
         raise
-import tempfile
+       
+file_cache = {}
 
-        
+def is_cached(cached_file_path):
+    if cached_file_path in file_cache:
+        return True  # Return cached result
+    exists = os.path.exists(cached_file_path)  # Perform disk check
+    if exists:
+        file_cache[cached_file_path] = True  # Cache the result
+    return exists
+
 def validate_audio_file(file):
     if not isinstance(file, werkzeug.datastructures.FileStorage):
         raise ValueError("Invalid file type")
@@ -159,21 +167,22 @@ def generate_audio():
                 raise ValueError(f"Output directory does not exist: {output_dir}")
 
             # Generate a unique hash for the text
+            text = preprocess_all(text)
+            logger.debug(f"Processed Text {text}")
             text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
             hashed_file_name = f"{text_hash}.wav"
             cached_file_path = os.path.join(output_dir, hashed_file_name)
-            logger.debug(f"Generated hash for text: {text_hash}")
+            logger.debug(f"Generated hash for processed text: {text_hash}")
             logger.debug(f"Output directory: {output_dir}")
             logger.debug(f"Cached file path: {cached_file_path}")
 
             # Check if cached file exists
-            if os.path.exists(cached_file_path):
+            if is_cached(cached_file_path):
                 logger.info(f"Returning cached audio for text: {text}")
                 return jsonify({"status": "success", "output_path": cached_file_path})
 
             # Tokenize text
             logger.debug("Tokenizing text...")
-            text = preprocess_all(text)
             from kokoro import phonemize, tokenize  # Import dynamically
             tokens = tokenize(phonemize(text, 'a'))
             logger.debug(f"Initial tokens: {tokens}")
