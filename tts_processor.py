@@ -68,6 +68,7 @@ def normalize_dates(text):
 def replace_invalid_chars(string):
     string = fix_text(string)
     replacements = {
+        "**": "",
         '&#x27;': "'",
         'AI;': 'Artificial Intelligence!',
         'iddqd;': 'Immortality cheat code',
