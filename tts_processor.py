@@ -1,127 +1,22 @@
 import re
-import dateparser
+from dateutil.parser import parse
 from num2words import num2words
+import inflect
+from ftfy import fix_text
 
-punctuation = r'[\s,.?!/)'>]'
+# Initialize the inflect engine
+inflect_engine = inflect.engine()
+
+# Define alphabet pronunciation mapping
 alphabet_map = {
-    "A": " Eh ",
-    "B": " Bee ",
-    "C": " See ",
-    "D": " Dee ",
-    "E": " Eee ",
-    "F": " Eff ",
-    "G": " Jee ",
-    "H": " Aitch ",
-    "I": " Eye ",
-    "J": " Jay ",
-    "K": " Kay ",
-    "L": " El ",
-    "M": " Emm ",
-    "N": " Enn ",
-    "O": " Ohh ",
-    "P": " Pee ",
-    "Q": " Queue ",
-    "R": " Are ",
-    "S": " Ess ",
-    "T": " Tee ",
-    "U": " You ",
-    "V": " Vee ",
-    "W": " Double You ",
-    "X": " Ex ",
-    "Y": " Why ",
-    "Z": " Zed "
+    "A": " Eh ", "B": " Bee ", "C": " See ", "D": " Dee ", "E": " Eee ",
+    "F": " Eff ", "G": " Jee ", "H": " Aitch ", "I": " Eye ", "J": " Jay ",
+    "K": " Kay ", "L": " El ", "M": " Emm ", "N": " Enn ", "O": " Ohh ",
+    "P": " Pee ", "Q": " Queue ", "R": " Are ", "S": " Ess ", "T": " Tee ",
+    "U": " You ", "V": " Vee ", "W": " Double You ", "X": " Ex ", "Y": " Why ", "Z": " Zed "
 }
 
-def preprocess_all(string):
-    # the order for some of these matter
-    # For example, you need to remove the commas in numbers before expanding them
-    string = normalize_dates(string)
-    string = replace_invalid_chars(string)
-    string = replace_numbers(string)
-
-    # TODO Try to use a ML predictor to expand abbreviations. It's hard, dependent on context, and whether to actually
-    # try to say the abbreviation or spell it out as I've done below is not agreed upon
-
-    # For now, expand abbreviations to pronunciations
-    # replace_abbreviations adds a lot of unnecessary whitespace to ensure separation
-    string = replace_abbreviations(string)
-
-    # cleanup whitespaces
-    string = clean_whitespace(string)
-
-    return string
-
-def expand_contractions(text):
-    # Dictionary of contractions and their expanded forms
-    contractions = {
-        "I'm": "I am",
-        "you're": "you are",
-        "he's": "he is",
-        "she's": "she is",
-        "it's": "it is",
-        "we're": "we are",
-        "they're": "they are",
-        "I've": "I have",
-        "you've": "you have",
-        "we've": "we have",
-        "they've": "they have",
-        "I'll": "I will",
-        "you'll": "you will",
-        "he'll": "he will",
-        "she'll": "she will",
-        "it'll": "it will",
-        "we'll": "we will",
-        "they'll": "they will",
-        "I'd": "I would",
-        "you'd": "you would",
-        "he'd": "he would",
-        "she'd": "she would",
-        "we'd": "we would",
-        "they'd": "they would",
-        "isn't": "is not",
-        "aren't": "are not",
-        "wasn't": "was not",
-        "weren't": "were not",
-        "haven't": "have not",
-        "hasn't": "has not",
-        "hadn't": "had not",
-        "won't": "will not",
-        "wouldn't": "would not",
-        "don't": "do not",
-        "doesn't": "does not",
-        "didn't": "did not",
-        "can't": "cannot",
-        "couldn't": "could not",
-        "shouldn't": "should not",
-        "mightn't": "might not",
-        "mustn't": "must not",
-        "let's": "let us",
-        "that's": "that is",
-        "who's": "who is",
-        "what's": "what is",
-        "where's": "where is",
-        "when's": "when is",
-        "why's": "why is",
-        "how's": "how is",
-        "there's": "there is",
-        "here's": "here is"
-    }
-
-    # Compile a regex pattern to match all contractions
-    pattern = re.compile(r'\b(' + '|'.join(re.escape(key) for key in contractions.keys()) + r')\b', re.IGNORECASE)
-
-    # Function to replace contractions with their expansions
-    def replace(match):
-        contraction = match.group(0)
-        expanded = contractions.get(contraction.lower())
-        if contraction.istitle():
-            return expanded.capitalize()  # Preserve title case
-        elif contraction.isupper():
-            return expanded.upper()      # Preserve upper case
-        return expanded                 # Default: lower case
-
-    return pattern.sub(replace, text)
-
+# Function to add ordinal suffix to a number
 def add_ordinal_suffix(day):
     """Adds ordinal suffix to a day (e.g., 13 -> 13th)."""
     if 11 <= day <= 13:  # Special case for 11th, 12th, 13th
@@ -135,7 +30,8 @@ def add_ordinal_suffix(day):
     else:
         return f"{day}th"
 
-def format_date(parsed_date):
+# Function to format dates in a human-readable form
+def format_date(parsed_date, include_time=True):
     """Formats a parsed date into a human-readable string."""
     if not parsed_date:
         return None
@@ -144,125 +40,102 @@ def format_date(parsed_date):
     day = add_ordinal_suffix(parsed_date.day)
 
     # Format the date in a TTS-friendly way
-    return parsed_date.strftime(f"%B {day}, %Y at %-I:%M %p")  # Unix
-    # On Windows, use "%B {day}, %Y at %#I:%M %p"
+    if include_time and parsed_date.hour != 0 and parsed_date.minute != 0:
+        return parsed_date.strftime(f"%B {day}, %Y at %-I:%M %p")  # Unix
+    return parsed_date.strftime(f"%B {day}, %Y")  # Only date
 
+# Normalize dates in the text
 def normalize_dates(text):
     """
     Finds and replaces date strings with a nicely formatted, TTS-friendly version.
     """
     def replace_date(match):
         raw_date = match.group(0)
-        # Attempt to parse the date
-        parsed_date = dateparser.parse(raw_date)
-
-        if parsed_date:
-            # Format the parsed date
-            return format_date(parsed_date)
-
-        # Return the original text if parsing fails
+        try:
+            parsed_date = parse(raw_date)
+            if parsed_date:
+                include_time = "T" in raw_date or " " in raw_date  # Include time only if explicitly provided
+                return format_date(parsed_date, include_time)
+        except ValueError:
+            pass
         return raw_date
 
     # Match common date formats
     date_pattern = r"\b(\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}:\d{2})?|\d{2}/\d{2}/\d{4}|\d{1,2} \w+ \d{4})\b"
     return re.sub(date_pattern, replace_date, text)
 
+# Replace invalid characters and clean text
 def replace_invalid_chars(string):
-    string = string.replace('"', '')
-    string = string.replace('`', '')
-     # Replace invalid single quotes, but preserve contractions
-    string = re.sub(r"(?<!\w)'|'(?!\w)", "", string)  # Removes single quotes not part of contractions
-
-    string = string.replace('\u201D', '').replace('\u201C', '')  # right and left quote
-    string = string.replace('\u201F', '')  # italic looking quote
-    string = string.replace('\n', ' ')
-    string = string.replace('&#x27;', '')
-    string = string.replace('AI;', 'Artificial Intelligence!')
-    string = string.replace('iddqd;', 'Immortality cheat code')
-    string = string.replace('😉;', 'wink wink!')
-    string = string.replace(';);', 'wink wink!')
-    string = string.replace(';-);', 'wink wink!')
-    string = string.replace(':D', '*laughs* Ahahaha!')
-    string = string.replace(';D', '*laughs* Ahahaha!')
-    string = string.replace(':-D', '*laughs* Ahahaha!')
+    string = fix_text(string)
+    replacements = {
+        '&#x27;': "'",
+        'AI;': 'Artificial Intelligence!',
+        'iddqd;': 'Immortality cheat code',
+        '😉;': 'wink wink!',
+        ':D': '*laughs* Ahahaha!',
+        ';D': '*laughs* Ahahaha!'
+    }
+    for old, new in replacements.items():
+        string = string.replace(old, new)
     return string
 
+# Replace numbers with their word equivalents
 def replace_numbers(string):
-    string = replace_negative(string)
-    string = hyphen_range_to(string)
-    string = num_to_words(string)
-    return string
+    ipv4_pattern = r'(\b\d{1,3}(\.\d{1,3}){3}\b)'
+    ipv6_pattern = r'([0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}'
+    range_pattern = r'\b\d+-\d+\b'  # Detect ranges like 1-4
+    date_pattern = r'\b\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2})?\b'
+    alphanumeric_pattern = r'\b[A-Za-z]+\d+|\d+[A-Za-z]+\b'
 
-def replace_negative(string):
-    return re.sub(rf'(\s)(-)(\d+)({punctuation})', r'\1negative \3\4', string)
+    # Do not process IP addresses, date patterns, or alphanumerics
+    if re.search(ipv4_pattern, string) or re.search(ipv6_pattern, string) or re.search(range_pattern, string) or re.search(date_pattern, string) or re.search(alphanumeric_pattern, string):
+        return string
 
-def hyphen_range_to(text):
-    pattern = re.compile(r'(\d+)[-–](\d+)')
-    result = pattern.sub(lambda x: x.group(1) + ' to ' + x.group(2), text)
-    return result
+    # Convert standalone numbers and port numbers
+    def convert_number(match):
+        number = match.group()
+        return num2words(int(number)) if number.isdigit() else number
 
-def num_to_words(text):
-    pattern = re.compile(r'\d+\.\d+|\d+')
-    result = pattern.sub(lambda x: num2words(float(x.group())), text)
-    return result
+    pattern = re.compile(r'\b\d+\b')
+    return re.sub(pattern, convert_number, string)
 
+# Replace abbreviations with expanded form
 def replace_abbreviations(string):
-    string = replace_uppercase_abbreviations(string)
-    string = replace_lowercase_abbreviations(string)
-    return string
+    words = string.split()
+    for i, word in enumerate(words):
+        if word.isupper() and len(word) <= 4 and not any(char.isdigit() for char in word) and word not in ["ID", "AM", "PM"]:
+            words[i] = ''.join([alphabet_map.get(char, char) for char in word])
+    return ' '.join(words)
 
-def replace_uppercase_abbreviations(string):
-    pattern = re.compile(rf'(^|[\s(.\'\[<])([A-Z]{{1,4}})({punctuation}|$)')
-    result = string
-    while True:
-        match = pattern.search(result)
-        if match is None:
-            break
-
-        start = match.start()
-        end = match.end()
-        result = result[0:start] + replace_abbreviation(result[start:end]) + result[end:len(result)]
-
-    return result
-
-def replace_lowercase_abbreviations(string):
-    pattern = re.compile(rf'(^|[\s(.\'\[<])(([a-z]\.){{1,4}})({punctuation}|$)')
-    result = string
-    while True:
-        match = pattern.search(result)
-        if match is None:
-            break
-
-        start = match.start()
-        end = match.end()
-        result = result[0:start] + replace_abbreviation(result[start:end].upper()) + result[end:len(result)]
-
-    return result
-
-def replace_abbreviation(string):
-    result = ""
-    for char in string:
-        result += match_mapping(char)
-
-    return result
-
-def match_mapping(char):
-    for mapping in alphabet_map.keys():
-        if char == mapping:
-            return alphabet_map[char]
-
-    return char
-
+# Clean up whitespace in the text
 def clean_whitespace(string):
-    string = re.sub(rf'\s+({punctuation})', r'\1', string)
-    string = string.strip()
-    string = ' '.join(string.split())
+    string = re.sub(r'\s+([.,?!])', r'\1', string)
+    return ' '.join(string.split())
+
+# Main preprocessing pipeline
+def preprocess_all(string):
+    string = normalize_dates(string)
+    string = replace_invalid_chars(string)
+    string = replace_numbers(string)
+    string = replace_abbreviations(string)
+    string = clean_whitespace(string)
     return string
 
-def __main__(args):
-    print(preprocess_all(args[1]))
+# Expose a testing function for external use
+def test_preprocessing(file_path):
+    with open(file_path, 'r') as file:
+        lines = file.readlines()
+    for line in lines:
+        original = line.strip()
+        processed = preprocess_all(original)
+        print(f"Original: {original}")
+        print(f"Processed: {processed}\n")
 
 if __name__ == "__main__":
     import sys
-    __main__(sys.argv)
+    if len(sys.argv) > 1:
+        test_file = sys.argv[1]
+        test_preprocessing(test_file)
+    else:
+        print("Please provide a file path as an argument.")
 

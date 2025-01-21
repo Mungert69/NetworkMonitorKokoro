@@ -17,7 +17,9 @@ common_requirements = [
     "tempfile",
     "num2words",
     "dateparser",
-    "hashlib"
+    "hashlib",
+    "inflect",
+    "ftfy"
 ]
 
 # Function to run shell commands
