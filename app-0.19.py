@@ -21,6 +21,7 @@ import hashlib
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
@@ -28,51 +29,61 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 global_lock = threading.Lock()
 
 # Repository ID and paths
-kokoro_model_id = 'onnx-community/Kokoro-82M-v1.0-ONNX'
-model_path = 'kokoro_model'
-voice_name = 'am_adam'  # Example voice: af (adjust as needed)
+kokoro_model_hexgrad_id = 'hexgrad/Kokoro-82M'
+model_path_hexgrad = 'kokoro_model_hexgrad'
+voice_name = 'am_adam'  # Voice: Adam
+commit_hash = 'aa2ee835d86e7f0a8e463436b5766e26dcf27f43'
 
 # Download and initialize models
 def initialize_models():
-    global sess, voice_style, processor, whisper_model
+    global sess, voicepack, processor, whisper_model
 
     try:
-        # Download the ONNX model if not already downloaded
-        if not os.path.exists(model_path):
-            logger.info("Downloading and loading Kokoro model...")
-            kokoro_dir = snapshot_download(kokoro_model_id, cache_dir=model_path)
-            logger.info(f"Kokoro model directory: {kokoro_dir}")
+        # Download Hexgrad model if not already downloaded
+        if not os.path.exists(model_path_hexgrad):
+            logger.info("Downloading and loading Hexgrad model...")
+            kokoro_dir_hexgrad = snapshot_download(kokoro_model_hexgrad_id, cache_dir=model_path_hexgrad, revision=commit_hash)
+            logger.info(f"Hexgrad model directory: {kokoro_dir_hexgrad}")
         else:
-            kokoro_dir = model_path
-            logger.info(f"Using cached Kokoro model directory: {kokoro_dir}")
+            kokoro_dir_hexgrad = model_path_hexgrad
+            logger.info(f"Using cached Hexgrad model directory: {kokoro_dir_hexgrad}")
 
         # Validate ONNX file path
         onnx_path = None
-        for root, _, files in os.walk(kokoro_dir):
-            if 'model.onnx' in files:
-                onnx_path = os.path.join(root, 'model.onnx')
+        for root, _, files in os.walk(kokoro_dir_hexgrad):
+            if 'kokoro-v0_19.onnx' in files:
+                onnx_path = os.path.join(root, 'kokoro-v0_19.onnx')
                 break
 
         if not onnx_path or not os.path.exists(onnx_path):
-            raise FileNotFoundError(f"ONNX file not found after redownload at {kokoro_dir}")
+            raise FileNotFoundError(f"ONNX file not found after redownload at {kokoro_dir_hexgrad}")
 
         logger.info("Loading ONNX session...")
         sess = InferenceSession(onnx_path)
         logger.info(f"ONNX session loaded successfully from {onnx_path}")
 
-        # Load the voice style vector
-        voice_style_path = None
-        for root, _, files in os.walk(kokoro_dir):
-            if f'{voice_name}.bin' in files:
-                voice_style_path = os.path.join(root, f'{voice_name}.bin')
+        # Add Hexgrad directory containing models.py to Python path
+        models_path = None
+        for root, _, files in os.walk(kokoro_dir_hexgrad):
+            if 'models.py' in files:
+                models_path = root
                 break
 
-        if not voice_style_path or not os.path.exists(voice_style_path):
-            raise FileNotFoundError(f"Voice style file not found at {voice_style_path}")
+        if not models_path:
+            raise FileNotFoundError(f"models.py not found in {kokoro_dir_hexgrad}")
+        sys.path.append(models_path)
+        logger.info(f"Added models directory to Python path: {models_path}")
 
-        logger.info("Loading voice style vector...")
-        voice_style = np.fromfile(voice_style_path, dtype=np.float32).reshape(-1, 1, 256)
-        logger.info(f"Voice style vector loaded successfully from {voice_style_path}")
+        from models import build_model  # Import after adding path
+        logger.info("Hexgrad model loaded successfully")
+
+        # Load voicepack
+        logger.info("Loading voicepack...")
+        voicepack_path = os.path.join(models_path, 'voices', f'{voice_name}.pt')
+        if not os.path.exists(voicepack_path):
+            raise FileNotFoundError(f"Voicepack file not found at {voicepack_path}")
+        voicepack = torch.load(voicepack_path)
+        logger.info(f"Voicepack loaded successfully from {voicepack_path}")
 
         # Initialize Whisper model for S2T
         logger.info("Downloading and loading Whisper model...")
@@ -84,7 +95,7 @@ def initialize_models():
     except Exception as e:
         logger.error(f"Error initializing models: {str(e)}")
         raise
-
+       
 file_cache = {}
 
 def is_cached(cached_file_path):
@@ -105,7 +116,7 @@ def validate_audio_file(file):
     file.seek(0)  # Reset file pointer
     if file_size > 10 * 1024 * 1024:  # 10 MB limit
         raise ValueError("File is too large (max 10 MB)")
-
+        
 def validate_text_input(text):
     if not isinstance(text, str):
         raise ValueError("Text input must be a string")
@@ -114,6 +125,14 @@ def validate_text_input(text):
     if len(text) > 1024:  # Limit to 1024 characters
         raise ValueError("Text input is too long (max 1024 characters)")
 
+def prepare_text_for_tts(text):
+    # Initialize the preprocessor
+    preprocessor = Preprocessor()
+
+    # Preprocess the text
+    processed_text = preprocessor.preprocess(text)
+
+    return processed_text
 # Initialize models
 initialize_models()
 
@@ -121,9 +140,10 @@ initialize_models()
 @app.route('/health', methods=['GET'])
 def health_check():
     try:
+        logger.debug(f"Request ID {g.request_id}: Health check requested")
         return jsonify({"status": "healthy"}), 200
     except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
+        logger.error(f"Request ID {g.request_id}: Health check failed: {str(e)}")
         return jsonify({"status": "unhealthy"}), 500
 
 @app.route('/generate_audio', methods=['POST'])
@@ -134,7 +154,7 @@ def generate_audio():
             logger.debug("Received request to /generate_audio")
             data = request.json
             text = data['text']
-            output_dir = data.get('output_dir')
+            output_dir = data.get('output_dir')  # Updated parameter name
 
             validate_text_input(text)
             logger.debug(f"Text: {text}")
@@ -170,30 +190,26 @@ def generate_audio():
             if len(tokens) > 510:
                 logger.warning("Text too long; truncating to 510 tokens.")
                 tokens = tokens[:510]
-            tokens = [[0, *tokens, 0]]  # Add pad tokens
+            tokens = [[0, *tokens, 0]]
             logger.debug(f"Final tokens: {tokens}")
 
-            # Get style vector based on token length
-            logger.debug("Fetching style vector...")
-            ref_s = voice_style[len(tokens[0]) - 2]  # Shape: (1, 256)
-            logger.debug(f"Style vector shape: {ref_s.shape}")
+            # Get voicepack style
+            logger.debug("Fetching voicepack style...")
+            style = voicepack[len(tokens[0]) - 2].numpy()
+            logger.debug(f"Voicepack style shape: {style.shape}")
 
             # Run ONNX inference
             logger.debug("Running ONNX inference...")
-            audio = sess.run(None, dict(
-                input_ids=np.array(tokens, dtype=np.int64),
-                style=ref_s,
-                speed=np.ones(1, dtype=np.float32),
-            ))[0]
+            audio = sess.run(None, {
+                'tokens': tokens,
+                'style': style,
+                'speed': np.ones(1, dtype=np.float32)
+            })[0]
             logger.debug(f"Audio generated with shape: {audio.shape}")
-
-            # Fix audio data for saving
-            audio = np.squeeze(audio)  # Remove extra dimension
-            audio = audio.astype(np.float32)  # Ensure correct data type
 
             # Save audio
             logger.debug(f"Saving audio to {cached_file_path}...")
-            sf.write(cached_file_path, audio, 24000)  # Save with 24 kHz sample rate
+            sf.write(cached_file_path, audio, 24000)
             logger.info(f"Audio saved successfully to {cached_file_path}")
             return jsonify({"status": "success", "output_path": cached_file_path})
         except Exception as e:
@@ -244,3 +260,5 @@ def transcribe_audio():
 if __name__ == '__main__':
     logger.info("Starting Flask server on 0.0.0.0:5000")
     app.run(host='0.0.0.0', port=5000)
+
+
