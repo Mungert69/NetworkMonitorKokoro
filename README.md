@@ -43,8 +43,10 @@ Ensure you have the following installed:
 - A CUDA-enabled GPU (optional, for faster inference)
 - **System Dependencies** (Debian/Ubuntu):
   ```bash
-  sudo apt-get install libsndfile1
+  sudo apt-get install libsndfile1 espeak-ng
   ```
+- **System Dependencies** (Windows) choco install libsndfile espeak-ng -y
+- **System Dependencies** (Mac) brew install libsndfile espeak-ng
 
 ### Steps
 
