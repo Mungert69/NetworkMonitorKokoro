@@ -7,7 +7,7 @@ ExecStart=/home/audioservice/code/services/kokoro/venv/bin/python3 /home/audiose
 WorkingDirectory=/home/audioservice/code/services/kokoro
 Restart=always
 User=audioservice
-Environment=SERVE_DIR=/home/audioservice/code/securefiles/dev/output_audio
+Environment=SERVE_DIR=/home/audioservice/code/securefiles/mail/output_audio
 Restart=always
 RestartSec=10
 StandardOutput=journal
