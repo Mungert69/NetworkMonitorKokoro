@@ -8,6 +8,8 @@ WorkingDirectory=/home/audioservice/code/services/kokoro
 Restart=always
 User=audioservice
 Environment=PYTHONUNBUFFERED=1
-
+Nice=-10
+CPUSchedulingPolicy=fifo 
+CPUSchedulingPriority=1   
 [Install]
 WantedBy=multi-user.target
