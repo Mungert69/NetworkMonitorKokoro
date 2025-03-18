@@ -19,7 +19,8 @@ common_requirements = [
     "dateparser",
     "hashlib",
     "inflect",
-    "ftfy"
+    "ftfy",
+    "sentencepiece"
 ]
 
 # Function to run shell commands
