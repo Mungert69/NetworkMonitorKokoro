@@ -10,6 +10,7 @@ User=audioservice
 Environment=PYTHONUNBUFFERED=1
 Nice=-10
 CPUSchedulingPolicy=fifo 
-CPUSchedulingPriority=1   
+CPUSchedulingPriority=1
+Environment=SERVE_DIR=/home/audioservice/code/securefiles/dev/output_audio   
 [Install]
 WantedBy=multi-user.target

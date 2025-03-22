@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory, abort
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
 import librosa
 import torch
@@ -14,7 +14,7 @@ import threading
 import werkzeug
 import tempfile
 from huggingface_hub import snapshot_download
-from tts_processor import preprocess_all 
+from tts_processor import preprocess_all
 import hashlib
 
 # Configure logging
@@ -32,7 +32,43 @@ kokoro_model_id = 'onnx-community/Kokoro-82M-v1.0-ONNX'
 model_path = 'kokoro_model'
 voice_name = 'am_adam'  # Example voice: af (adjust as needed)
 
-# Download and initialize models
+# Directory to serve files from
+SERVE_DIR = os.environ.get("SERVE_DIR", "./files")  # Default to './files' if not provided
+
+os.makedirs(SERVE_DIR, exist_ok=True)
+def validate_audio_file(file):
+    if not isinstance(file, werkzeug.datastructures.FileStorage):
+        raise ValueError("Invalid file type")
+    if file.content_type not in ["audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp3"]:
+        raise ValueError("Unsupported file type")
+    file.seek(0, os.SEEK_END)
+    file_size = file.tell()
+    file.seek(0)  # Reset file pointer
+    if file_size > 10 * 1024 * 1024:  # 10 MB limit
+        raise ValueError("File is too large (max 10 MB)")
+
+def validate_text_input(text):
+    if not isinstance(text, str):
+        raise ValueError("Text input must be a string")
+    if len(text.strip()) == 0:
+        raise ValueError("Text input cannot be empty")
+    if len(text) > 1024:  # Limit to 1024 characters
+        raise ValueError("Text input is too long (max 1024 characters)")
+
+file_cache = {}
+
+def is_cached(cached_file_path):
+    """
+    Check if a file exists in the cache.
+    If the file is not in the cache, perform a disk check and update the cache.
+    """
+    if cached_file_path in file_cache:
+        return file_cache[cached_file_path]  # Return cached result
+    exists = os.path.exists(cached_file_path)  # Perform disk check
+    file_cache[cached_file_path] = exists  # Update the cache
+    return exists
+
+# Initialize models
 def initialize_models():
     global sess, voice_style, processor, whisper_model
 
@@ -85,35 +121,6 @@ def initialize_models():
         logger.error(f"Error initializing models: {str(e)}")
         raise
 
-file_cache = {}
-
-def is_cached(cached_file_path):
-    if cached_file_path in file_cache:
-        return True  # Return cached result
-    exists = os.path.exists(cached_file_path)  # Perform disk check
-    if exists:
-        file_cache[cached_file_path] = True  # Cache the result
-    return exists
-
-def validate_audio_file(file):
-    if not isinstance(file, werkzeug.datastructures.FileStorage):
-        raise ValueError("Invalid file type")
-    if file.content_type not in ["audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp3"]:
-        raise ValueError("Unsupported file type")
-    file.seek(0, os.SEEK_END)
-    file_size = file.tell()
-    file.seek(0)  # Reset file pointer
-    if file_size > 10 * 1024 * 1024:  # 10 MB limit
-        raise ValueError("File is too large (max 10 MB)")
-
-def validate_text_input(text):
-    if not isinstance(text, str):
-        raise ValueError("Text input must be a string")
-    if len(text.strip()) == 0:
-        raise ValueError("Text input cannot be empty")
-    if len(text) > 1024:  # Limit to 1024 characters
-        raise ValueError("Text input is too long (max 1024 characters)")
-
 # Initialize models
 initialize_models()
 
@@ -126,6 +133,7 @@ def health_check():
         logger.error(f"Health check failed: {str(e)}")
         return jsonify({"status": "unhealthy"}), 500
 
+# Text-to-Speech (T2S) Endpoint
 @app.route('/generate_audio', methods=['POST'])
 def generate_audio():
     """Text-to-Speech (T2S) Endpoint"""
@@ -200,6 +208,7 @@ def generate_audio():
             logger.error(f"Error generating audio: {str(e)}")
             return jsonify({"status": "error", "message": str(e)}), 500
 
+# Speech-to-Text (S2T) Endpoint
 @app.route('/transcribe_audio', methods=['POST'])
 def transcribe_audio():
     """Speech-to-Text (S2T) Endpoint"""
@@ -241,6 +250,41 @@ def transcribe_audio():
                 os.remove(audio_path)
                 logger.debug(f"Temporary file {audio_path} removed")
 
-if __name__ == '__main__':
-    logger.info("Starting Flask server on 0.0.0.0:5000")
-    app.run(host='0.0.0.0', port=5000)
+@app.route('/files/<filename>', methods=['GET'])
+def serve_wav_file(filename):
+    """
+    Serve a .wav file from the configured directory.
+    Only serves files ending with '.wav'.
+    """
+    # Ensure only .wav files are allowed
+    if not filename.lower().endswith('.wav'):
+        abort(400, "Only .wav files are allowed.")
+    
+    # Check if the file exists in the directory
+    file_path = os.path.join(SERVE_DIR, filename)
+    logger.debug(f"Looking for file at: {file_path}")
+    if not os.path.isfile(file_path):
+        logger.error(f"File not found: {file_path}")
+        abort(404, "File not found.")
+    
+    # Serve the file
+    return send_from_directory(SERVE_DIR, filename)
+
+# Error handlers
+@app.errorhandler(400)
+def bad_request(error):
+    """Handle 400 errors."""
+    return {"error": "Bad Request", "message": str(error)}, 400
+
+@app.errorhandler(404)
+def not_found(error):
+    """Handle 404 errors."""
+    return {"error": "Not Found", "message": str(error)}, 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    """Handle unexpected errors."""
+    return {"error": "Internal Server Error", "message": "An unexpected error occurred."}, 500
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
