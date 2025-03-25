@@ -287,4 +287,4 @@ def internal_error(error):
     return {"error": "Internal Server Error", "message": "An unexpected error occurred."}, 500
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=7860)
