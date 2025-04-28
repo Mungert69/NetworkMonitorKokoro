@@ -37,15 +37,36 @@ SERVE_DIR = os.environ.get("SERVE_DIR", "./files")  # Default to './files' if no
 
 os.makedirs(SERVE_DIR, exist_ok=True)
 def validate_audio_file(file):
+    """Validates audio files including WebM/Opus format"""
     if not isinstance(file, werkzeug.datastructures.FileStorage):
         raise ValueError("Invalid file type")
-    if file.content_type not in ["audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp3"]:
-        raise ValueError("Unsupported file type")
+    
+    # Supported MIME types (add WebM/Opus)
+    supported_types = [
+        "audio/wav",
+        "audio/x-wav",
+        "audio/mpeg",
+        "audio/mp3",
+        "audio/webm",
+        "audio/ogg"  # For Opus in Ogg container
+    ]
+    
+    # Check MIME type
+    if file.content_type not in supported_types:
+        raise ValueError(f"Unsupported file type. Must be one of: {', '.join(supported_types)}")
+    
+    # Check file size
     file.seek(0, os.SEEK_END)
     file_size = file.tell()
     file.seek(0)  # Reset file pointer
-    if file_size > 10 * 1024 * 1024:  # 10 MB limit
-        raise ValueError("File is too large (max 10 MB)")
+    
+    max_size = 10 * 1024 * 1024  # 10 MB
+    if file_size > max_size:
+        raise ValueError(f"File is too large (max {max_size//(1024*1024)} MB)")
+    
+    # Optional: Verify file header matches content_type
+    if not verify_audio_header(file):
+        raise ValueError("File header doesn't match declared content type")
 
 def validate_text_input(text):
     if not isinstance(text, str):
@@ -207,15 +228,6 @@ def generate_audio():
         except Exception as e:
             logger.error(f"Error generating audio: {str(e)}")
             return jsonify({"status": "error", "message": str(e)}), 500
-@app.route('/transcribe_webm', methods=['POST'])
-def transcribe_webm():
-    """Dedicated endpoint for WebM/Opus audio"""
-    if 'file' not in request.files:
-        return jsonify({"error": "No file provided"}), 400
-        
-    # Force WebM content type to pass validation
-    request.files['file'].content_type = 'audio/webm'  
-    return transcribe_audio()  # Reuse main function
 
 # Speech-to-Text (S2T) Endpoint
 @app.route('/transcribe_audio', methods=['POST'])
