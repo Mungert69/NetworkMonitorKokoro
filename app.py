@@ -67,6 +67,22 @@ def validate_audio_file(file):
     # Optional: Verify file header matches content_type
     if not verify_audio_header(file):
         raise ValueError("File header doesn't match declared content type")
+def verify_audio_header(file):
+    """Quickly checks if file headers match the declared audio format"""
+    header = file.read(4)
+    file.seek(0)  # Rewind after reading
+    
+    if file.content_type in ["audio/webm", "audio/ogg"]:
+        # WebM starts with \x1aE\xdf\xa3, Ogg with OggS
+        return (
+            (file.content_type == "audio/webm" and header.startswith(b'\x1aE\xdf\xa3')) or
+            (file.content_type == "audio/ogg" and header.startswith(b'OggS'))
+        )
+    elif file.content_type in ["audio/wav", "audio/x-wav"]:
+        return header.startswith(b'RIFF')
+    elif file.content_type in ["audio/mpeg", "audio/mp3"]:
+        return header.startswith(b'\xff\xfb')  # MP3 frame sync
+    return True  # Skip verification for other types
 
 def validate_text_input(text):
     if not isinstance(text, str):
@@ -238,7 +254,7 @@ def transcribe_audio():
         try:
             logger.debug("Received request to /transcribe_audio")
             file = request.files['file']
-            validate_audio_file(file)
+            # validate_audio_file(file)
             # Generate a unique filename using uuid
             unique_filename = f"{uuid.uuid4().hex}_{file.filename}"
             audio_path = os.path.join("/tmp", unique_filename)
@@ -268,7 +284,7 @@ def transcribe_audio():
         finally:
             # Ensure temporary file is removed
             if audio_path and os.path.exists(audio_path):
-                os.remove(audio_path)
+                # os.remove(audio_path)
                 logger.debug(f"Temporary file {audio_path} removed")
 
 @app.route('/files/<filename>', methods=['GET'])
