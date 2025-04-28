@@ -207,6 +207,15 @@ def generate_audio():
         except Exception as e:
             logger.error(f"Error generating audio: {str(e)}")
             return jsonify({"status": "error", "message": str(e)}), 500
+@app.route('/transcribe_webm', methods=['POST'])
+def transcribe_webm():
+    """Dedicated endpoint for WebM/Opus audio"""
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+        
+    # Force WebM content type to pass validation
+    request.files['file'].content_type = 'audio/webm'  
+    return transcribe_audio()  # Reuse main function
 
 # Speech-to-Text (S2T) Endpoint
 @app.route('/transcribe_audio', methods=['POST'])
