@@ -246,24 +246,60 @@ def generate_audio():
             return jsonify({"status": "error", "message": str(e)}), 500
 
 # Speech-to-Text (S2T) Endpoint
+# Add these imports at the top with the other imports
+import subprocess
+import tempfile
+from pathlib import Path
+
+# Then update the transcribe_audio function:
 @app.route('/transcribe_audio', methods=['POST'])
 def transcribe_audio():
-    """Speech-to-Text (S2T) Endpoint"""
+    """Speech-to-Text (S2T) Endpoint with automatic format conversion"""
     with global_lock:  # Acquire global lock to ensure only one instance runs
-        audio_path = None
+        input_audio_path = None
+        converted_audio_path = None
         try:
             logger.debug("Received request to /transcribe_audio")
             file = request.files['file']
-            # validate_audio_file(file)
-            # Generate a unique filename using uuid
-            unique_filename = f"{uuid.uuid4().hex}_{file.filename}"
-            audio_path = os.path.join("/tmp", unique_filename)
-            file.save(audio_path)
-            logger.debug(f"Audio file saved to {audio_path}")
-
-            # Load and preprocess audio
+            
+            # Create temporary files for both input and output
+            with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix) as input_temp:
+                input_audio_path = input_temp.name
+                file.save(input_audio_path)
+                logger.debug(f"Original audio file saved to {input_audio_path}")
+            
+            # Create a temporary file for the converted WAV
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as output_temp:
+                converted_audio_path = output_temp.name
+            
+            # Convert to WAV with ffmpeg (16kHz, mono)
+            logger.debug(f"Converting audio to 16kHz mono WAV format...")
+            conversion_command = [
+                'ffmpeg',
+                '-y',                  # Force overwrite without prompting
+                '-i', input_audio_path,
+                '-acodec', 'pcm_s16le', # 16-bit PCM
+                '-ac', '1',             # mono
+                '-ar', '16000',         # 16kHz sample rate
+                '-af', 'highpass=f=80,lowpass=f=7500,afftdn=nr=10:nf=-25,loudnorm=I=-16:TP=-1.5:LRA=11',  # Audio cleanup filters
+                converted_audio_path
+            ]
+            result = subprocess.run(
+                conversion_command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            if result.returncode != 0:
+                logger.error(f"FFmpeg conversion error: {result.stderr}")
+                raise Exception(f"Audio conversion failed: {result.stderr}")
+            
+            logger.debug(f"Audio successfully converted to {converted_audio_path}")
+            
+            # Load and process the converted audio
             logger.debug("Processing audio for transcription...")
-            audio_array, sampling_rate = librosa.load(audio_path, sr=16000)
+            audio_array, sampling_rate = librosa.load(converted_audio_path, sr=16000)
 
             input_features = processor(
                 audio_array,
@@ -282,10 +318,14 @@ def transcribe_audio():
             logger.error(f"Error transcribing audio: {str(e)}")
             return jsonify({"status": "error", "message": str(e)}), 500
         finally:
-            # Ensure temporary file is removed
-            if audio_path and os.path.exists(audio_path):
-                # os.remove(audio_path)
-                logger.debug(f"Temporary file {audio_path} removed")
+            # Clean up temporary files
+            for path in [input_audio_path, converted_audio_path]:
+                if path and os.path.exists(path):
+                    try:
+                        os.remove(path)
+                        logger.debug(f"Temporary file {path} removed")
+                    except Exception as e:
+                        logger.warning(f"Failed to remove temporary file {path}: {e}")
 
 @app.route('/files/<filename>', methods=['GET'])
 def serve_wav_file(filename):
