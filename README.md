@@ -9,7 +9,7 @@ NetworkMonitorKokoro is a Flask-based service that provides advanced text-to-spe
 
 This repository leverages ONNX for efficient inference and Hugging Face's model hub for seamless model downloads.
 
-You can see the script in action with the Free Network Monitor Assistant at [https://freenetworkmonitor.click](https://freenetworkmonitor.click).
+You can see the script in action with the Quantum Network Monitor Assistant at [https://freenetworkmonitor.click](https://freenetworkmonitor.click).
 
 ---
 
