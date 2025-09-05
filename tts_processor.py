@@ -108,10 +108,18 @@ def replace_abbreviations(string):
             words[i] = ''.join([alphabet_map.get(char, char) for char in word])
     return ' '.join(words)
 
-# Clean up whitespace in the text
 def clean_whitespace(string):
+    # Remove spaces before punctuation
     string = re.sub(r'\s+([.,?!])', r'\1', string)
-    return ' '.join(string.split())
+    # Collapse multiple spaces into one, but don’t touch inside tokens like "test.com"
+    string = re.sub(r'\s{2,}', ' ', string)
+    return string.strip()
+
+def make_dots_tts_friendly(text):
+    # Fix common cases
+    text = re.sub(r'(?<=\w)\.(?=\w)', ' dot ', text)  # test.com -> test dot com
+    text = re.sub(r'(?<=\s)\.(?=\w)', ' dot ', text)  # .Net -> dot Net
+    return text
 
 # Main preprocessing pipeline
 def preprocess_all(string):
@@ -119,6 +127,7 @@ def preprocess_all(string):
     string = replace_invalid_chars(string)
     string = replace_numbers(string)
     string = replace_abbreviations(string)
+    string = make_dots_tts_friendly(string)
     string = clean_whitespace(string)
     return string
 
