@@ -116,9 +116,21 @@ def clean_whitespace(string):
     return string.strip()
 
 def make_dots_tts_friendly(text):
-    # Fix common cases
-    text = re.sub(r'(?<=\w)\.(?=\w)', ' dot ', text)  # test.com -> test dot com
-    text = re.sub(r'(?<=\s)\.(?=\w)', ' dot ', text)  # .Net -> dot Net
+    # Handle IP addresses (force "dot")
+    ipv4_pattern = r'\b\d{1,3}(\.\d{1,3}){3}\b'
+    text = re.sub(ipv4_pattern, lambda m: m.group(0).replace('.', ' dot '), text)
+
+    # Handle domain-like endings (force "dot")
+    domain_pattern = r'\b([\w-]+)\.(com|net|org|io|gov|edu|exe|dll|local)\b'
+    text = re.sub(domain_pattern, lambda m: m.group(0).replace('.', ' dot '), text)
+
+    # Handle decimals (use "point")
+    decimal_pattern = r'\b\d+\.\d+\b'
+    text = re.sub(decimal_pattern, lambda m: m.group(0).replace('.', ' point '), text)
+
+    # Handle leading dot words (.Net → dot Net)
+    text = re.sub(r'\.(?=\w)', 'dot ', text)
+
     return text
 
 # Main preprocessing pipeline
