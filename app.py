@@ -16,6 +16,33 @@ import tempfile
 from huggingface_hub import snapshot_download
 from tts_processor import preprocess_all
 import hashlib
+import os
+import torch
+import numpy as np
+import onnxruntime as ort
+
+# ---------------------------
+# THREAD LIMIT CONFIG
+# ---------------------------
+MAX_THREADS = 2  # <-- change this number to control all thread usage
+# ---------------------------
+
+# Limit NumPy / BLAS / MKL threads
+os.environ["OMP_NUM_THREADS"] = str(MAX_THREADS)
+os.environ["OPENBLAS_NUM_THREADS"] = str(MAX_THREADS)
+os.environ["MKL_NUM_THREADS"] = str(MAX_THREADS)
+os.environ["VECLIB_MAXIMUM_THREADS"] = str(MAX_THREADS)
+os.environ["NUMEXPR_NUM_THREADS"] = str(MAX_THREADS)
+
+# Torch thread limits
+torch.set_num_threads(MAX_THREADS)
+torch.set_num_interop_threads(1)  # keep inter-op small to avoid overhead
+
+# ONNXRuntime session options (use when creating the session)
+sess_options = ort.SessionOptions()
+sess_options.intra_op_num_threads = MAX_THREADS
+sess_options.inter_op_num_threads = 1
+
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -130,7 +157,7 @@ def initialize_models():
             raise FileNotFoundError(f"ONNX file not found after redownload at {kokoro_dir}")
 
         logger.info("Loading ONNX session...")
-        sess = InferenceSession(onnx_path)
+        sess = InferenceSession(onnx_path, sess_options)
         logger.info(f"ONNX session loaded successfully from {onnx_path}")
 
         # Load the voice style vector
@@ -364,4 +391,5 @@ def internal_error(error):
     return {"error": "Internal Server Error", "message": "An unexpected error occurred."}, 500
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=7860)
+    app.run(host="0.0.0.0", port=7860, threaded=False, processes=1)
+
