@@ -25,7 +25,13 @@ import onnxruntime as ort
 # THREAD LIMIT CONFIG
 # ---------------------------
 MAX_THREADS = 2  # <-- change this number to control all thread usage
+
 # ---------------------------
+# ---------------------------
+# STORAGE ROOT
+# ---------------------------
+SERVE_DIR = "/home/user/app/files"
+os.makedirs(SERVE_DIR, exist_ok=True)
 
 # Limit NumPy / BLAS / MKL threads
 os.environ["OMP_NUM_THREADS"] = str(MAX_THREADS)
@@ -201,73 +207,49 @@ def health_check():
 @app.route('/generate_audio', methods=['POST'])
 def generate_audio():
     """Text-to-Speech (T2S) Endpoint"""
-    with global_lock:  # Acquire global lock to ensure only one instance runs
+    with global_lock:
         try:
             logger.debug("Received request to /generate_audio")
             data = request.json
             text = data['text']
-            output_dir = data.get('output_dir')
 
             validate_text_input(text)
-            logger.debug(f"Text: {text}")
-            if not output_dir:
-                raise ValueError("Output directory is required but not provided")
 
-            # Ensure output_dir is an absolute path and valid
-            if not os.path.isabs(output_dir):
-                raise ValueError("Output directory must be an absolute path")
-            if not os.path.exists(output_dir):
-                raise ValueError(f"Output directory does not exist: {output_dir}")
-
-            # Generate a unique hash for the text
+            # Preprocess & stable hash
             text = preprocess_all(text)
-            logger.debug(f"Processed Text {text}")
             text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
-            hashed_file_name = f"{text_hash}.wav"
-            cached_file_path = os.path.join(output_dir, hashed_file_name)
-            logger.debug(f"Generated hash for processed text: {text_hash}")
-            logger.debug(f"Output directory: {output_dir}")
-            logger.debug(f"Cached file path: {cached_file_path}")
+            filename = f"{text_hash}.wav"
+            cached_file_path = os.path.join(SERVE_DIR, filename)
 
-            # Check if cached file exists
+            # Cache hit
             if is_cached(cached_file_path):
-                logger.info(f"Returning cached audio for text: {text}")
-                return jsonify({"status": "success", "output_path": cached_file_path})
+                logger.info("Returning cached audio")
+                return jsonify({"status": "success", "filename": filename})
 
-            # Tokenize text
-            logger.debug("Tokenizing text...")
-            from kokoro import phonemize, tokenize  # Import dynamically
+            # Tokenize
+            from kokoro import phonemize, tokenize  # lazy import is fine
             tokens = tokenize(phonemize(text, 'a'))
-            logger.debug(f"Initial tokens: {tokens}")
             if len(tokens) > 510:
                 logger.warning("Text too long; truncating to 510 tokens.")
                 tokens = tokens[:510]
-            tokens = [[0, *tokens, 0]]  # Add pad tokens
-            logger.debug(f"Final tokens: {tokens}")
+            tokens = [[0, *tokens, 0]]
 
-            # Get style vector based on token length
-            logger.debug("Fetching style vector...")
-            ref_s = voice_style[len(tokens[0]) - 2]  # Shape: (1, 256)
-            logger.debug(f"Style vector shape: {ref_s.shape}")
+            # Style vector
+            ref_s = voice_style[len(tokens[0]) - 2]  # (1,256)
 
-            # Run ONNX inference
-            logger.debug("Running ONNX inference...")
+            # ONNX inference
             audio = sess.run(None, dict(
                 input_ids=np.array(tokens, dtype=np.int64),
                 style=ref_s,
                 speed=np.ones(1, dtype=np.float32),
             ))[0]
-            logger.debug(f"Audio generated with shape: {audio.shape}")
 
-            # Fix audio data for saving
-            audio = np.squeeze(audio)  # Remove extra dimension
-            audio = audio.astype(np.float32)  # Ensure correct data type
+            # Save
+            audio = np.squeeze(audio).astype(np.float32)
+            sf.write(cached_file_path, audio, 24000)
 
-            # Save audio
-            logger.debug(f"Saving audio to {cached_file_path}...")
-            sf.write(cached_file_path, audio, 24000)  # Save with 24 kHz sample rate
-            logger.info(f"Audio saved successfully to {cached_file_path}")
-            return jsonify({"status": "success", "output_path": cached_file_path})
+            logger.info(f"Audio saved: {cached_file_path}")
+            return jsonify({"status": "success", "filename": filename})
         except Exception as e:
             logger.error(f"Error generating audio: {str(e)}")
             return jsonify({"status": "error", "message": str(e)}), 500
