@@ -26,13 +26,6 @@ import onnxruntime as ort
 # ---------------------------
 MAX_THREADS = 2  # <-- change this number to control all thread usage
 
-# ---------------------------
-# ---------------------------
-# STORAGE ROOT
-# ---------------------------
-SERVE_DIR = "/home/user/app/files"
-os.makedirs(SERVE_DIR, exist_ok=True)
-
 # Limit NumPy / BLAS / MKL threads
 os.environ["OMP_NUM_THREADS"] = str(MAX_THREADS)
 os.environ["OPENBLAS_NUM_THREADS"] = str(MAX_THREADS)
@@ -66,7 +59,8 @@ model_path = 'kokoro_model'
 voice_name = 'am_adam'  # Example voice: af (adjust as needed)
 
 # Directory to serve files from
-SERVE_DIR = os.environ.get("SERVE_DIR", "./files")  # Default to './files' if not provided
+default_serve_dir = os.path.join(os.path.expanduser("~"), "app", "files")
+SERVE_DIR = os.environ.get("SERVE_DIR", default_serve_dir)
 
 os.makedirs(SERVE_DIR, exist_ok=True)
 def validate_audio_file(file):
@@ -374,4 +368,3 @@ def internal_error(error):
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=7860, threaded=False, processes=1)
-
