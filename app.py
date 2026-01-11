@@ -134,7 +134,7 @@ def is_cached(cached_file_path):
     return exists
 
 ASR_ENGINE = os.environ.get("ASR_ENGINE", "wav2vec2_onnx").lower()
-ASR_ONNX_REPO = os.environ.get("ASR_ONNX_REPO", "jonatasgrosman/wav2vec2-base-960h-onnx")
+ASR_ONNX_REPO = os.environ.get("ASR_ONNX_REPO", "onnx-community/wav2vec2-base-960h-ONNX")
 
 # Initialize models
 def initialize_models():
@@ -375,8 +375,7 @@ def transcribe_audio():
                 # Collapse repeats and remove CTC blank (id 0 for many models; rely on processor)
                 transcription = asr_processor.batch_decode(pred_ids)[0]
                 transcription = transcription.strip()
-                logger.info(f"Transcription (Wav2Vec2 ONNX): {transcription}
-")
+                logger.info(f"Transcription (Wav2Vec2 ONNX): {transcription}")
             else:
                 # Whisper fallback
                 input_features = processor(
