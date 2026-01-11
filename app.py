@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, send_from_directory, abort
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
+from transformers import Wav2Vec2Processor
 import librosa
 import torch
 import numpy as np
@@ -138,9 +139,12 @@ def is_cached(cached_file_path):
     file_cache[cached_file_path] = exists  # Update the cache
     return exists
 
+ASR_ENGINE = os.environ.get("ASR_ENGINE", "wav2vec2_onnx").lower()
+ASR_ONNX_REPO = os.environ.get("ASR_ONNX_REPO", "jonatasgrosman/wav2vec2-base-960h-onnx")
+
 # Initialize models
 def initialize_models():
-    global sess, voice_style, processor, whisper_model
+    global sess, voice_style, processor, whisper_model, asr_session, asr_processor
 
     try:
         # Download the ONNX model if not already downloaded
@@ -180,12 +184,58 @@ def initialize_models():
         voice_style = np.fromfile(voice_style_path, dtype=np.float32).reshape(-1, 1, 256)
         logger.info(f"Voice style vector loaded successfully from {voice_style_path}")
 
-        # Initialize Whisper model for S2T
-        logger.info("Downloading and loading Whisper model...")
-        processor = WhisperProcessor.from_pretrained("openai/whisper-base")
-        whisper_model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-base")
-        whisper_model.config.forced_decoder_ids = None
-        logger.info("Whisper model loaded successfully")
+        # Initialize ASR engine
+        if ASR_ENGINE == "wav2vec2_onnx":
+            logger.info("Loading Wav2Vec2 ONNX ASR model (facebook/wav2vec2-base-960h)...")
+            # Load processor for feature extraction + CTC labels
+            asr_processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
+
+            # Try to locate/download ONNX model; if not present, export path would be required.
+            # For simplicity, we rely on an already-exported ONNX at ./asr_onnx/model.onnx if provided.
+            # If not found, fall back to ORT's optimized model via HF Optimum export guidance.
+            asr_onnx_path_env = os.environ.get("ASR_ONNX_PATH", "asr_onnx/model.onnx")
+            if not os.path.exists(asr_onnx_path_env):
+                logger.info(f"ASR ONNX not found at {asr_onnx_path_env}. Attempting to download from {ASR_ONNX_REPO}...")
+                try:
+                    cache_dir = os.environ.get("ASR_ONNX_CACHE_DIR", "asr_onnx_cache")
+                    repo_dir = snapshot_download(ASR_ONNX_REPO, cache_dir=cache_dir)
+                    # Look for common ONNX filenames
+                    onnx_path = None
+                    for root, _, files in os.walk(repo_dir):
+                        for cand in ["model.onnx", "wav2vec2.onnx", "onnx/model.onnx"]:
+                            if cand in files:
+                                onnx_path = os.path.join(root, cand if cand != "onnx/model.onnx" else "model.onnx")
+                                break
+                        if onnx_path:
+                            break
+                    if not onnx_path:
+                        # Fallback: pick first .onnx file found
+                        for root, _, files in os.walk(repo_dir):
+                            for f in files:
+                                if f.endswith(".onnx"):
+                                    onnx_path = os.path.join(root, f)
+                                    break
+                            if onnx_path:
+                                break
+                    if not onnx_path:
+                        raise FileNotFoundError("No .onnx file found in downloaded repo")
+                    os.makedirs(os.path.dirname(asr_onnx_path_env), exist_ok=True)
+                    # Copy to stable location
+                    import shutil
+                    shutil.copyfile(onnx_path, asr_onnx_path_env)
+                    logger.info(f"Downloaded ASR ONNX to {asr_onnx_path_env}")
+                except Exception as de:
+                    logger.error(f"Failed to download ASR ONNX: {de}")
+                    logger.warning("Falling back to Whisper PT engine.")
+                    raise
+            asr_session = InferenceSession(asr_onnx_path_env, sess_options)
+            logger.info("Wav2Vec2 ONNX ASR model loaded")
+        else:
+            logger.info("ASR_ENGINE set to whisper_pt; loading Whisper model...")
+            processor = WhisperProcessor.from_pretrained("openai/whisper-base")
+            whisper_model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-base")
+            whisper_model.config.forced_decoder_ids = None
+            logger.info("Whisper model loaded successfully")
 
     except Exception as e:
         logger.error(f"Error initializing models: {str(e)}")
@@ -310,17 +360,41 @@ def transcribe_audio():
             logger.debug("Processing audio for transcription...")
             audio_array, sampling_rate = librosa.load(converted_audio_path, sr=16000)
 
-            input_features = processor(
-                audio_array,
-                sampling_rate=sampling_rate,
-                return_tensors="pt"
-            ).input_features
+            if ASR_ENGINE == "wav2vec2_onnx" and 'asr_session' in globals() and asr_session is not None:
+                # Prepare input for Wav2Vec2 ONNX: float32 PCM, shape (batch, samples)
+                inputs = asr_processor(audio_array, sampling_rate=16000, return_tensors="np")
+                # Some exports expect input as (batch, sequence); adjust key as needed
+                ort_inputs = {}
+                # Common input name variants
+                for name in ["input_values", "input_features", "inputs"]:
+                    if name in [i.name for i in asr_session.get_inputs()]:
+                        ort_inputs[name] = inputs["input_values"].astype(np.float32)
+                        break
+                else:
+                    # Fall back to first input name
+                    first_name = asr_session.get_inputs()[0].name
+                    ort_inputs[first_name] = inputs["input_values"].astype(np.float32)
 
-            # Generate transcription
-            logger.debug("Generating transcription...")
-            predicted_ids = whisper_model.generate(input_features)
-            transcription = processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
-            logger.info(f"Transcription: {transcription}")
+                logits = asr_session.run(None, ort_inputs)[0]  # (batch, time, vocab)
+                # Greedy CTC decode
+                pred_ids = np.argmax(logits, axis=-1)
+                # Collapse repeats and remove CTC blank (id 0 for many models; rely on processor)
+                transcription = asr_processor.batch_decode(pred_ids)[0]
+                transcription = transcription.strip()
+                logger.info(f"Transcription (Wav2Vec2 ONNX): {transcription}
+")
+            else:
+                # Whisper fallback
+                input_features = processor(
+                    audio_array,
+                    sampling_rate=sampling_rate,
+                    return_tensors="pt"
+                ).input_features
+
+                logger.debug("Generating transcription (Whisper)...")
+                predicted_ids = whisper_model.generate(input_features)
+                transcription = processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
+                logger.info(f"Transcription (Whisper): {transcription}")
 
             return jsonify({"status": "success", "transcription": transcription})
         except Exception as e:
@@ -374,4 +448,3 @@ def internal_error(error):
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=7860, threaded=False, processes=1)
-

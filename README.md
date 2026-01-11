@@ -20,15 +20,17 @@ You can see the script in action with the Quantum Network Monitor Assistant at [
   - Configurable voice styles via preloaded voicepacks.
 
 - **S2T (Speech-to-Text)**
-  - Accurate audio transcription with OpenAI Whisper.
+  - Default: CPU-friendly ONNX CTC pipeline using Facebook Wav2Vec2 (facebook/wav2vec2-base-960h).
+  - Fallback: OpenAI Whisper (PyTorch) when enabled.
   - Handles a wide range of audio inputs.
 
 - **Automatic Model Management**
   - Models are automatically downloaded from the Hugging Face Hub if not present locally.
 
 - **Flask API Endpoints**
-  - `/generate_audio`: Convert text into speech.
-  - `/transcribe_audio`: Transcribe audio into text.
+  - `/generate_audio`: Convert text into speech and cache by text hash.
+  - `/transcribe_audio`: Transcribe uploaded audio; auto-converts to 16kHz WAV via ffmpeg.
+  - `/files/<filename>`: Serve generated `.wav` files from the serve directory.
 
 ---
 
@@ -78,14 +80,23 @@ Ensure you have the following installed:
    This script detects your operating system and installs the dependencies accordingly for Linux, Windows, and macOS.
 
 4. **Set up the models**:
-   - The Kokoro T2S model and OpenAI Whisper S2T model will be downloaded automatically during runtime.
+   - The Kokoro T2S model is downloaded automatically on first run.
+   - For ASR (S2T), by default this app expects an exported ONNX model for Wav2Vec2 at `asr_onnx/model.onnx`. Provide this path via `ASR_ONNX_PATH` or place the file accordingly. See "ASR Engines" below.
 
-5. **Start the Flask server**:
+5. **Configure file serving directory (optional)**:
+   - The app writes generated audio to a serve directory. By default it uses `./files`.
+   - To customize, set env var before start:
+     ```bash
+     export SERVE_DIR=/absolute/path/for/generated/audio
+     mkdir -p "$SERVE_DIR"
+     ```
+
+6. **Start the Flask server**:
    ```bash
    python3 app.py
    ```
 
-6. **Deactivate the virtual environment** (optional):
+7. **Deactivate the virtual environment** (optional):
    ```bash
    deactivate
    ```
@@ -171,32 +182,100 @@ To run **NetworkMonitorKokoro** as a systemd service on Linux, follow these step
 #### 1. **Generate Audio**
 - **Endpoint**: `/generate_audio`
 - **Method**: `POST`
-- **Request Body**:
+- **Request Body (JSON)**:
+  - `text` (string, required): text to synthesize. Max 1024 chars. Input is preprocessed and hashed for caching.
   ```json
-  {
-    "text": "Your text here",
-    "output_dir": "/absolute/path/to/save/file/to/"
-  }
+  { "text": "Your text here" }
   ```
 - **Response**:
   ```json
   {
     "status": "success",
-    "output_path": "/absolute/path/to/save/file/to/<hash>.wav"
+    "filename": "<sha256(text)>.wav"
   }
   ```
+  - The audio file is saved under the serve directory (`$SERVE_DIR` or `./files`).
+  - Fetch the audio via `GET /files/<filename>`.
 
 #### 2. **Transcribe Audio**
 - **Endpoint**: `/transcribe_audio`
 - **Method**: `POST`
-- **Request Body**:
-  - A form-data request with an audio file.
+- **Request**:
+  - `multipart/form-data` with file field name `file`.
+  - Supported containers: WAV, MP3, WebM, Ogg/Opus, etc. The server converts input to 16kHz mono WAV using `ffmpeg` and applies light denoise/normalization filters.
 - **Response**:
   ```json
   {
     "status": "success",
     "transcription": "Your transcription here"
   }
+  ```
+
+---
+
+## ASR Engines
+
+- Engine selection via env var `ASR_ENGINE`:
+  - `wav2vec2_onnx` (default): Uses ONNXRuntime with a Wav2Vec2 CTC model (e.g., facebook/wav2vec2-base-960h).
+  - `whisper_pt`: Uses OpenAI Whisper (PyTorch) as in the original implementation.
+
+- Wav2Vec2 ONNX model provisioning:
+  - On first run, if `ASR_ONNX_PATH` does not exist, the app downloads a ready-made ONNX model from `ASR_ONNX_REPO` (default: `jonatasgrosman/wav2vec2-base-960h-onnx`) and stores it under `asr_onnx/model.onnx`.
+  - You can override the source repo via `ASR_ONNX_REPO` or the destination path via `ASR_ONNX_PATH`.
+  - The model should take `input_values` (batch, samples) float32 at 16 kHz and output CTC logits `(batch, time, vocab)`.
+  - Tokenizer: this app uses `Wav2Vec2Processor` from `facebook/wav2vec2-base-960h` for feature extraction and decoding.
+
+- Example run with Wav2Vec2 ONNX:
+  ```bash
+  export ASR_ENGINE=wav2vec2_onnx
+  export ASR_ONNX_PATH=asr_onnx/model.onnx
+  # optional override of the source repo
+  # export ASR_ONNX_REPO=jonatasgrosman/wav2vec2-base-960h-onnx
+  python3 app.py
+  ```
+
+- Example run with Whisper fallback:
+  ```bash
+  export ASR_ENGINE=whisper_pt
+  python3 app.py
+  ```
+
+#### 3. **Serve Audio Files**
+- **Endpoint**: `/files/<filename>`
+- **Method**: `GET`
+- **Notes**:
+  - Only serves `.wav` files located in the serve directory.
+  - Returns 404 if the file does not exist.
+
+---
+
+## Operational Details
+
+- Concurrency: the app uses a global lock so only one synthesis/transcription runs at a time. Internal math libraries and ONNX Runtime are also constrained to a small thread count (`MAX_THREADS=2`).
+- Models:
+  - T2S uses `onnx-community/Kokoro-82M-v1.0-ONNX`. The ONNX file `model.onnx` and voice style binary (e.g., `am_adam.bin`) are downloaded via `huggingface_hub` on first run and then cached under `kokoro_model/`.
+  - S2T uses `openai/whisper-base` via `transformers`.
+- Caching: generated audio is content-addressed by `sha256(preprocessed_text)`; repeated requests for the same text return the existing filename without recomputation.
+- File location: generated WAV files are saved to `$SERVE_DIR` (default `./files`).
+
+---
+
+## Example Requests
+
+- Generate audio:
+  ```bash
+  curl -sX POST http://localhost:7860/generate_audio \
+    -H 'Content-Type: application/json' \
+    -d '{"text":"Hello from Kokoro."}'
+  # => {"status":"success","filename":"<hash>.wav"}
+  curl -O http://localhost:7860/files/<hash>.wav
+  ```
+
+- Transcribe audio:
+  ```bash
+  curl -sX POST http://localhost:7860/transcribe_audio \
+    -F file=@sample.webm
+  # => {"status":"success","transcription":"..."}
   ```
 
 ### Example Requests
