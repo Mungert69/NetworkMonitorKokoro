@@ -16,6 +16,129 @@ alphabet_map = {
     "U": " You ", "V": " Vee ", "W": " Double You ", "X": " Ex ", "Y": " Why ", "Z": " Zed "
 }
 
+TECH_ACRONYM_REPLACEMENTS = [
+    (r"\bhttps\b", "H T T P S"),
+    (r"\bhttp\b", "H T T P"),
+    (r"\bssh\b", "S S H"),
+    (r"\bdns\b", "D N S"),
+    (r"\bntp\b", "N T P"),
+    (r"\bsnmp\b", "S N M P"),
+    (r"\btcp\b", "T C P"),
+    (r"\budp\b", "U D P"),
+    (r"\bicmp\b", "I C M P"),
+    (r"\bip\b", "I P"),
+    (r"\bipv4\b", "I P v four"),
+    (r"\bipv6\b", "I P v six"),
+    (r"\btls\b", "T L S"),
+    (r"\bssl\b", "S S L"),
+    (r"\brdp\b", "R D P"),
+    (r"\bsql\b", "sequel"),
+    (r"\bapi\b", "A P I"),
+    (r"\buid\b", "U I D"),
+    (r"\bgpu\b", "G P U"),
+    (r"\bcpu\b", "C P U"),
+    (r"\bram\b", "R A M"),
+    (r"\bttl\b", "T T L"),
+    (r"\brtt\b", "R T T"),
+    (r"\bbgp\b", "B G P"),
+    (r"\bospf\b", "O S P F"),
+    (r"\bospfv2\b", "O S P F v two"),
+    (r"\bospfv3\b", "O S P F v three"),
+    (r"\bis-is\b", "I S I S"),
+    (r"\brip\b", "R I P"),
+    (r"\bdhcp\b", "D H C P"),
+    (r"\barp\b", "A R P"),
+    (r"\bndp\b", "N D P"),
+    (r"\bnat\b", "N A T"),
+    (r"\bpat\b", "P A T"),
+    (r"\bgre\b", "G R E"),
+    (r"\bvrrp\b", "V R R P"),
+    (r"\bhsrp\b", "H S R P"),
+    (r"\bglbp\b", "G L B P"),
+    (r"\bstp\b", "S T P"),
+    (r"\brstp\b", "R S T P"),
+    (r"\bmstp\b", "M S T P"),
+    (r"\blldp\b", "L L D P"),
+    (r"\bcdp\b", "C D P"),
+    (r"\bldap\b", "ell dap"),
+    (r"\bsaml\b", "sam el"),
+    (r"\boauth\b", "oh auth"),
+    (r"\boidc\b", "O I D C"),
+    (r"\bsso\b", "S S O"),
+    (r"\bsmtp\b", "S M T P"),
+    (r"\bimap\b", "I M A P"),
+    (r"\bpop3\b", "P O P three"),
+    (r"\bpop\b", "P O P"),
+    (r"\bftp\b", "F T P"),
+    (r"\bsftp\b", "S F T P"),
+    (r"\bftps\b", "F T P S"),
+    (r"\btftp\b", "T F T P"),
+    (r"\bmqtt\b", "M Q T T"),
+    (r"\bamqp\b", "A M Q P"),
+    (r"\bcoap\b", "C O A P"),
+    (r"\bquic\b", "Q U I C"),
+    (r"\bgrpc\b", "gee R P C"),
+    (r"\bsoap\b", "S O A P"),
+    (r"\bjson\b", "jay son"),
+    (r"\byaml\b", "yam el"),
+    (r"\bxml\b", "ex em el"),
+    (r"\bwebsocket\b", "web socket"),
+    (r"\bwss\b", "W S S"),
+    (r"\bws\b", "W S"),
+    (r"\bicmpv6\b", "I C M P v six"),
+    (r"\bntlm\b", "N T L M"),
+    (r"\bpki\b", "P K I"),
+    (r"\bcsr\b", "C S R"),
+    (r"\bcrt\b", "C R T"),
+    (r"\bca\b", "C A"),
+    (r"\bwan\b", "W A N"),
+    (r"\blan\b", "L A N"),
+    (r"\bvlan\b", "V L A N"),
+    (r"\bvxlan\b", "V X L A N"),
+    (r"\bqos\b", "Q O S"),
+    (r"\bmtu\b", "M T U"),
+    (r"\bpoe\b", "P O E"),
+    (r"\bpoe\+", "P O E plus"),
+    (r"\bvrf\b", "V R F"),
+    (r"\bacl\b", "A C L"),
+    (r"\bnat64\b", "N A T sixty four"),
+    (r"\bdsr\b", "D S R"),
+    (r"\bsiem\b", "S I E M"),
+    (r"\bids\b", "I D S"),
+    (r"\bips\b", "I P S"),
+    (r"\bedr\b", "E D R"),
+    (r"\bxdr\b", "X D R"),
+    (r"\bsoc\b", "S O C"),
+    (r"\bmdr\b", "M D R"),
+    (r"\bndr\b", "N D R"),
+    (r"\bav\b", "A V"),
+    (r"\bendpoint\b", "end point"),
+    (r"\bsaas\b", "S A A S"),
+    (r"\biaas\b", "I A A S"),
+    (r"\bpaas\b", "P A A S"),
+    (r"\bdlp\b", "D L P"),
+    (r"\bmfa\b", "M F A"),
+    (r"\b2fa\b", "two F A"),
+    (r"\b3fa\b", "three F A"),
+    (r"\bmd5\b", "M D five"),
+    (r"\bsha1\b", "sha one"),
+    (r"\bsha256\b", "sha two five six"),
+    (r"\bsha512\b", "sha five one two"),
+    (r"\baes\b", "A E S"),
+    (r"\baes-?gcm\b", "A E S G C M"),
+    (r"\baes-?cbc\b", "A E S C B C"),
+    (r"\brsa\b", "R S A"),
+    (r"\becdsa\b", "E C D S A"),
+    (r"\bed25519\b", "E D two five five one nine"),
+    (r"\bjwt\b", "J W T"),
+    (r"\bsshd\b", "S S H D"),
+    (r"\bntp\d?\b", "N T P"),
+    (r"\bntp\s+server\b", "N T P server"),
+    (r"\bntp\s+pool\b", "N T P pool"),
+    (r"\bhttpd\b", "H T T P D"),
+    (r"\bnginx\b", "engine x"),
+]
+
 # Function to add ordinal suffix to a number
 def add_ordinal_suffix(day):
     """Adds ordinal suffix to a day (e.g., 13 -> 13th)."""
@@ -133,6 +256,11 @@ def make_dots_tts_friendly(text):
 
     return text
 
+def apply_replacements(value, replacements):
+    for pattern, replacement in replacements:
+        value = re.sub(pattern, replacement, value, flags=re.IGNORECASE)
+    return value
+
 def tech_humanize(text):
     """
     Humanize technical tokens (URLs, emails, UUIDs, MACs, paths) for TTS.
@@ -221,130 +349,7 @@ def tech_humanize(text):
     text = re.sub(r"\bhttps?/(\d+(?:\.\d+)?)\b", lambda m: f"H T T P slash {m.group(1).replace('.', ' point ')}", text, flags=re.IGNORECASE)
 
     # Common protocol tokens (force letter-by-letter)
-    text = re.sub(r"\bhttps\b", "H T T P S", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bhttp\b", "H T T P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bssh\b", "S S H", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bdns\b", "D N S", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bntp\b", "N T P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bsnmp\b", "S N M P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\btcp\b", "T C P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\budp\b", "U D P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bicmp\b", "I C M P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bip\b", "I P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bipv4\b", "I P v four", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bipv6\b", "I P v six", text, flags=re.IGNORECASE)
-    text = re.sub(r"\btls\b", "T L S", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bssl\b", "S S L", text, flags=re.IGNORECASE)
-    text = re.sub(r"\brdp\b", "R D P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bsql\b", "sequel", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bapi\b", "A P I", text, flags=re.IGNORECASE)
-    text = re.sub(r"\buid\b", "U I D", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bgpu\b", "G P U", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bcpu\b", "C P U", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bram\b", "R A M", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bttl\b", "T T L", text, flags=re.IGNORECASE)
-    text = re.sub(r"\brtt\b", "R T T", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bbgp\b", "B G P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bospf\b", "O S P F", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bospfv2\b", "O S P F v two", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bospfv3\b", "O S P F v three", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bis-is\b", "I S I S", text, flags=re.IGNORECASE)
-    text = re.sub(r"\brip\b", "R I P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bdhcp\b", "D H C P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\barp\b", "A R P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bndp\b", "N D P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bnat\b", "N A T", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bpat\b", "P A T", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bgre\b", "G R E", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bvrrp\b", "V R R P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bhsrp\b", "H S R P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bglbp\b", "G L B P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bstp\b", "S T P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\brstp\b", "R S T P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bmstp\b", "M S T P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\blldp\b", "L L D P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bcdp\b", "C D P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bldap\b", "ell dap", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bkerberos\b", "kerberos", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bsaml\b", "sam el", text, flags=re.IGNORECASE)
-    text = re.sub(r"\boauth\b", "oh auth", text, flags=re.IGNORECASE)
-    text = re.sub(r"\boidc\b", "O I D C", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bsso\b", "S S O", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bsmtp\b", "S M T P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bimap\b", "I M A P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bpop3\b", "P O P three", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bpop\b", "P O P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bftp\b", "F T P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bsftp\b", "S F T P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bftps\b", "F T P S", text, flags=re.IGNORECASE)
-    text = re.sub(r"\btftp\b", "T F T P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bmqtt\b", "M Q T T", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bamqp\b", "A M Q P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bcoap\b", "C O A P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bquic\b", "Q U I C", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bgrpc\b", "gee R P C", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bsoap\b", "S O A P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bjson\b", "jay son", text, flags=re.IGNORECASE)
-    text = re.sub(r"\byaml\b", "yam el", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bxml\b", "ex em el", text, flags=re.IGNORECASE)
-    text = re.sub(r"\brest\b", "rest", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bwebsocket\b", "web socket", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bwss\b", "W S S", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bws\b", "W S", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bicmpv6\b", "I C M P v six", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bntlm\b", "N T L M", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bpki\b", "P K I", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bcsr\b", "C S R", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bcrt\b", "C R T", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bca\b", "C A", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bwan\b", "W A N", text, flags=re.IGNORECASE)
-    text = re.sub(r"\blan\b", "L A N", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bvlan\b", "V L A N", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bvxlan\b", "V X L A N", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bqos\b", "Q O S", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bmtu\b", "M T U", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bpoe\b", "P O E", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bpoe\+", "P O E plus", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bvrf\b", "V R F", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bacl\b", "A C L", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bnat64\b", "N A T sixty four", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bdsr\b", "D S R", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bsiem\b", "S I E M", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bids\b", "I D S", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bips\b", "I P S", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bedr\b", "E D R", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bxdr\b", "X D R", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bsoc\b", "S O C", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bmdr\b", "M D R", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bndr\b", "N D R", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bav\b", "A V", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bendpoint\b", "end point", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bsaas\b", "S A A S", text, flags=re.IGNORECASE)
-    text = re.sub(r"\biaas\b", "I A A S", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bpaas\b", "P A A S", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bdlp\b", "D L P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bmfa\b", "M F A", text, flags=re.IGNORECASE)
-    text = re.sub(r"\b2fa\b", "two F A", text, flags=re.IGNORECASE)
-    text = re.sub(r"\b3fa\b", "three F A", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bmd5\b", "M D five", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bsha1\b", "sha one", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bsha256\b", "sha two five six", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bsha512\b", "sha five one two", text, flags=re.IGNORECASE)
-    text = re.sub(r"\baes\b", "A E S", text, flags=re.IGNORECASE)
-    text = re.sub(r"\baes-?gcm\b", "A E S G C M", text, flags=re.IGNORECASE)
-    text = re.sub(r"\baes-?cbc\b", "A E S C B C", text, flags=re.IGNORECASE)
-    text = re.sub(r"\brsa\b", "R S A", text, flags=re.IGNORECASE)
-    text = re.sub(r"\becdsa\b", "E C D S A", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bed25519\b", "E D two five five one nine", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bjwt\b", "J W T", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bsshd\b", "S S H D", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bntp\d?\b", "N T P", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bntp\s+server\b", "N T P server", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bntp\s+pool\b", "N T P pool", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bhttpd\b", "H T T P D", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bnginx\b", "engine x", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bapache\b", "apache", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bpostfix\b", "postfix", text, flags=re.IGNORECASE)
+    text = apply_replacements(text, TECH_ACRONYM_REPLACEMENTS)
 
     # Hex values and CVEs
     text = re.sub(r"\b0x([0-9A-Fa-f]+)\b", normalize_hex, text)
@@ -398,7 +403,7 @@ def tech_humanize(text):
     text = re.sub(r"\b(\d+(?:\.\d+)?)\s*min\b", r"\1 minutes", text, flags=re.IGNORECASE)
 
     # Optional plural markers like domain(s) -> "domain or domains"
-    text = re.sub(r"\b([A-Za-z]+)\(s\)\b", r"\1 or \1s", text)
+    text = re.sub(r"\b([A-Za-z]+)\(s\)(?!\w)", r"\1 or \1s", text)
 
     return text
 
