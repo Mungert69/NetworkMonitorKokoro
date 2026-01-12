@@ -133,11 +133,171 @@ def make_dots_tts_friendly(text):
 
     return text
 
+def tech_humanize(text):
+    """
+    Humanize technical tokens (URLs, emails, UUIDs, MACs, paths) for TTS.
+    Keep outputs ASCII and TTS-friendly.
+    """
+    def spell_chars(token):
+        return " ".join(list(token))
+
+    def normalize_url(match):
+        url = match.group(0)
+        url = url.replace("https://", "HTTPS://").replace("http://", "HTTP://")
+        url = url.replace("://", " colon slash slash ")
+        url = url.replace("/", " slash ")
+        url = url.replace("?", " question mark ")
+        url = url.replace("&", " and ")
+        url = url.replace("=", " equals ")
+        url = url.replace("#", " hash ")
+        url = url.replace("_", " underscore ")
+        url = url.replace("-", " dash ")
+        url = url.replace(".", " dot ")
+        return url
+
+    def normalize_email(match):
+        email = match.group(0)
+        email = email.replace("@", " at ")
+        email = email.replace(".", " dot ")
+        email = email.replace("_", " underscore ")
+        email = email.replace("-", " dash ")
+        return email
+
+    def normalize_uuid(match):
+        uuid_text = match.group(0)
+        groups = uuid_text.split("-")
+        spelled = [" ".join(list(group)) for group in groups]
+        return " dash ".join(spelled)
+
+    def normalize_mac(match):
+        mac_text = match.group(0)
+        groups = mac_text.split(":")
+        spelled = [" ".join(list(group)) for group in groups]
+        return " colon ".join(spelled)
+
+    def normalize_ipv6(match):
+        ipv6_text = match.group(0)
+        groups = ipv6_text.split(":")
+        spelled = [" ".join(list(group)) for group in groups if group]
+        return " colon ".join(spelled)
+
+    def normalize_ipv6_compact(match):
+        ipv6_text = match.group(0)
+        left, _, right = ipv6_text.partition("::")
+        left_groups = [g for g in left.split(":") if g]
+        right_groups = [g for g in right.split(":") if g]
+        left_spelled = [" ".join(list(group)) for group in left_groups]
+        right_spelled = [" ".join(list(group)) for group in right_groups]
+        middle = " double colon "
+        left_part = " colon ".join(left_spelled)
+        right_part = " colon ".join(right_spelled)
+        if left_part and right_part:
+            return f"{left_part}{middle}{right_part}"
+        if left_part:
+            return f"{left_part}{middle}"
+        return f"{middle}{right_part}"
+
+    def normalize_mac_dash(match):
+        mac_text = match.group(0)
+        groups = mac_text.split("-")
+        spelled = [" ".join(list(group)) for group in groups]
+        return " dash ".join(spelled)
+
+    def normalize_hex(match):
+        hex_text = match.group(1)
+        return "hex " + " ".join(list(hex_text))
+
+    def normalize_cve(match):
+        year = match.group(1)
+        ident = match.group(2)
+        return f"C V E {year} dash {ident}"
+
+    # Common protocol tokens (force letter-by-letter)
+    text = re.sub(r"\bhttps\b", "H T T P S", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bhttp\b", "H T T P", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bssh\b", "S S H", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bdns\b", "D N S", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bntp\b", "N T P", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bsnmp\b", "S N M P", text, flags=re.IGNORECASE)
+    text = re.sub(r"\btcp\b", "T C P", text, flags=re.IGNORECASE)
+    text = re.sub(r"\budp\b", "U D P", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bicmp\b", "I C M P", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bip\b", "I P", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bipv4\b", "I P v four", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bipv6\b", "I P v six", text, flags=re.IGNORECASE)
+    text = re.sub(r"\btls\b", "T L S", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bssl\b", "S S L", text, flags=re.IGNORECASE)
+    text = re.sub(r"\brdp\b", "R D P", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bsql\b", "S Q L", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bapi\b", "A P I", text, flags=re.IGNORECASE)
+    text = re.sub(r"\buid\b", "U I D", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bgpu\b", "G P U", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bcpu\b", "C P U", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bram\b", "R A M", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bttl\b", "T T L", text, flags=re.IGNORECASE)
+    text = re.sub(r"\brtt\b", "R T T", text, flags=re.IGNORECASE)
+
+    # Version tokens like TLS1.3 or HTTP/2
+    text = re.sub(r"\b(tls|ssl)\s*(\d+(?:\.\d+)?)\b", lambda m: f"{m.group(1).upper()} {m.group(2).replace('.', ' point ')}", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bhttps?/(\d+(?:\.\d+)?)\b", lambda m: f"H T T P slash {m.group(1).replace('.', ' point ')}", text, flags=re.IGNORECASE)
+
+    # Hex values and CVEs
+    text = re.sub(r"\b0x([0-9A-Fa-f]+)\b", normalize_hex, text)
+    text = re.sub(r"\bCVE-(\d{4})-(\d{4,7})\b", normalize_cve, text)
+
+    # Interfaces like eth0, wlan0, en0, lo0
+    text = re.sub(r"\b(eth|wlan|en|lo)(\d+)\b", lambda m: f"{m.group(1)} {m.group(2)}", text, flags=re.IGNORECASE)
+
+    # URLs and emails
+    text = re.sub(r"\bhttps?://[^\s]+", normalize_url, text, flags=re.IGNORECASE)
+    text = re.sub(r"\b[\w.+-]+@[\w.-]+\.\w+\b", normalize_email, text)
+
+    # UUIDs, MACs, IPv6
+    text = re.sub(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b", normalize_uuid, text)
+    text = re.sub(r"\b(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\b", normalize_mac, text)
+    text = re.sub(r"\b(?:[0-9A-Fa-f]{2}-){5}[0-9A-Fa-f]{2}\b", normalize_mac_dash, text)
+    text = re.sub(r"\b(?:[0-9A-Fa-f]{1,4}:){2,7}[0-9A-Fa-f]{1,4}\b", normalize_ipv6, text)
+    text = re.sub(r"\b[0-9A-Fa-f:]*::[0-9A-Fa-f:]*\b", normalize_ipv6_compact, text)
+
+    # Common separators in paths/flags
+    text = re.sub(r"(?<=\w)/(?!\s)", " slash ", text)
+    text = re.sub(r"\\", " backslash ", text)
+    text = re.sub(r"(?<=\w)-(?=\w)", " dash ", text)
+    text = re.sub(r"(?<=\w)_(?=\w)", " underscore ", text)
+    text = re.sub(r"(?<=\w):(?=\w)", " colon ", text)
+    text = re.sub(r"->", " arrow ", text)
+    text = re.sub(r"=>", " arrow ", text)
+    text = re.sub(r"\b(\d+)%\b", r"\1 percent", text)
+
+    # Versions like v1.2.3 -> v 1 point 2 point 3
+    text = re.sub(r"\bv(\d+(?:\.\d+)+)\b", lambda m: "v " + m.group(1).replace(".", " point "), text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+\.\d+\.\d+)\b", lambda m: m.group(1).replace(".", " point "), text)
+
+    # Units and rates
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*kbps\b", r"\1 kilobits per second", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*mbps\b", r"\1 megabits per second", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*gbps\b", r"\1 gigabits per second", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*tbps\b", r"\1 terabits per second", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*kb\b", r"\1 kilobytes", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*mb\b", r"\1 megabytes", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*gb\b", r"\1 gigabytes", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*tb\b", r"\1 terabytes", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*mhz\b", r"\1 mega hertz", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*ghz\b", r"\1 giga hertz", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*ms\b", r"\1 milliseconds", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*us\b", r"\1 microseconds", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*ns\b", r"\1 nanoseconds", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*s\b", r"\1 seconds", text)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*min\b", r"\1 minutes", text, flags=re.IGNORECASE)
+
+    return text
+
 # Main preprocessing pipeline
 def preprocess_all(string):
     string = normalize_dates(string)
     string = replace_invalid_chars(string)
     string = replace_numbers(string)
+    string = tech_humanize(string)
     string = replace_abbreviations(string)
     string = make_dots_tts_friendly(string)
     string = clean_whitespace(string)
@@ -160,4 +320,3 @@ if __name__ == "__main__":
         test_preprocessing(test_file)
     else:
         print("Please provide a file path as an argument.")
-
