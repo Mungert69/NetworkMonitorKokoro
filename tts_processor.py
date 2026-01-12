@@ -212,6 +212,14 @@ def tech_humanize(text):
         ident = match.group(2)
         return f"C V E {year} dash {ident}"
 
+    # URLs and emails (do this early before protocol expansions)
+    text = re.sub(r"\bhttps?://[^\s]+", normalize_url, text, flags=re.IGNORECASE)
+    text = re.sub(r"\b[\w.+-]+@[\w.-]+\.\w+\b", normalize_email, text)
+
+    # Version tokens like TLS1.3 or HTTP/2
+    text = re.sub(r"\b(tls|ssl)\s*(\d+(?:\.\d+)?)\b", lambda m: f"{m.group(1).upper()} {m.group(2).replace('.', ' point ')}", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bhttps?/(\d+(?:\.\d+)?)\b", lambda m: f"H T T P slash {m.group(1).replace('.', ' point ')}", text, flags=re.IGNORECASE)
+
     # Common protocol tokens (force letter-by-letter)
     text = re.sub(r"\bhttps\b", "H T T P S", text, flags=re.IGNORECASE)
     text = re.sub(r"\bhttp\b", "H T T P", text, flags=re.IGNORECASE)
@@ -296,7 +304,7 @@ def tech_humanize(text):
     text = re.sub(r"\bqos\b", "Q O S", text, flags=re.IGNORECASE)
     text = re.sub(r"\bmtu\b", "M T U", text, flags=re.IGNORECASE)
     text = re.sub(r"\bpoe\b", "P O E", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bpoe\+\b", "P O E plus", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bpoe\+", "P O E plus", text, flags=re.IGNORECASE)
     text = re.sub(r"\bvrf\b", "V R F", text, flags=re.IGNORECASE)
     text = re.sub(r"\bacl\b", "A C L", text, flags=re.IGNORECASE)
     text = re.sub(r"\bnat64\b", "N A T sixty four", text, flags=re.IGNORECASE)
@@ -338,20 +346,12 @@ def tech_humanize(text):
     text = re.sub(r"\bapache\b", "apache", text, flags=re.IGNORECASE)
     text = re.sub(r"\bpostfix\b", "postfix", text, flags=re.IGNORECASE)
 
-    # Version tokens like TLS1.3 or HTTP/2
-    text = re.sub(r"\b(tls|ssl)\s*(\d+(?:\.\d+)?)\b", lambda m: f"{m.group(1).upper()} {m.group(2).replace('.', ' point ')}", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bhttps?/(\d+(?:\.\d+)?)\b", lambda m: f"H T T P slash {m.group(1).replace('.', ' point ')}", text, flags=re.IGNORECASE)
-
     # Hex values and CVEs
     text = re.sub(r"\b0x([0-9A-Fa-f]+)\b", normalize_hex, text)
     text = re.sub(r"\bCVE-(\d{4})-(\d{4,7})\b", normalize_cve, text)
 
     # Interfaces like eth0, wlan0, en0, lo0
     text = re.sub(r"\b(eth|wlan|en|lo)(\d+)\b", lambda m: f"{m.group(1)} {m.group(2)}", text, flags=re.IGNORECASE)
-
-    # URLs and emails
-    text = re.sub(r"\bhttps?://[^\s]+", normalize_url, text, flags=re.IGNORECASE)
-    text = re.sub(r"\b[\w.+-]+@[\w.-]+\.\w+\b", normalize_email, text)
 
     # UUIDs, MACs, IPv6
     text = re.sub(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b", normalize_uuid, text)
@@ -360,6 +360,8 @@ def tech_humanize(text):
     text = re.sub(r"\b(?:[0-9A-Fa-f]{1,4}:){2,7}[0-9A-Fa-f]{1,4}\b", normalize_ipv6, text)
     text = re.sub(r"\b[0-9A-Fa-f:]*::[0-9A-Fa-f:]*\b", normalize_ipv6_compact, text)
 
+    # Acronym/acroynm like TCP/IP -> "TCP slash IP"
+    text = re.sub(r"\b([A-Z]{2,})\s*/\s*([A-Z]{2,})\b", r"\1 slash \2", text)
     # Word/word patterns like this/that -> "this or that"
     text = re.sub(r"\b([A-Za-z]+)\s*/\s*([A-Za-z]+)\b", r"\1 or \2", text)
 
@@ -394,6 +396,9 @@ def tech_humanize(text):
     text = re.sub(r"\b(\d+(?:\.\d+)?)\s*ns\b", r"\1 nanoseconds", text, flags=re.IGNORECASE)
     text = re.sub(r"\b(\d+(?:\.\d+)?)\s*s\b", r"\1 seconds", text)
     text = re.sub(r"\b(\d+(?:\.\d+)?)\s*min\b", r"\1 minutes", text, flags=re.IGNORECASE)
+
+    # Optional plural markers like domain(s) -> "domain or domains"
+    text = re.sub(r"\b([A-Za-z]+)\(s\)\b", r"\1 or \1s", text)
 
     return text
 
