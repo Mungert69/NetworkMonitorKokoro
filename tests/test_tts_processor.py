@@ -22,6 +22,11 @@ class TestTtsProcessor(unittest.TestCase):
         out = preprocess_all(text)
         self.assertIn("domain or domains", out)
 
+    def test_number_hyphenation(self):
+        text = "showing 4 out of 24"
+        out = preprocess_all(text)
+        self.assertIn("twenty four", out)
+
     def test_double_dash(self):
         text = "Use --testmode for debug"
         out = preprocess_all(text)

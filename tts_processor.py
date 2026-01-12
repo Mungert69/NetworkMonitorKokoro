@@ -218,7 +218,7 @@ def replace_numbers(string):
     # Convert standalone numbers and port numbers
     def convert_number(match):
         number = match.group()
-        return num2words(int(number)) if number.isdigit() else number
+        return num2words(int(number)).replace("-", " ") if number.isdigit() else number
 
     pattern = re.compile(r'\b\d+\b')
     return re.sub(pattern, convert_number, string)
