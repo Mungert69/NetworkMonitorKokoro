@@ -11,6 +11,7 @@ import sys
 import uuid
 import logging
 from flask_cors import CORS
+import re
 import threading
 import werkzeug
 import tempfile
@@ -133,21 +134,12 @@ def is_cached(cached_file_path):
     file_cache[cached_file_path] = exists  # Update the cache
     return exists
 
-ASR_ENGINE = os.environ.get("ASR_ENGINE", "wav2vec2_onnx").lower()
-ASR_MODEL = os.environ.get("ASR_MODEL", "base").lower()
-ASR_MODEL_MAP = {
-    "base": "facebook/wav2vec2-base-960h",
-    "large": "facebook/wav2vec2-large-960h-lv60",
-}
-ASR_ONNX_REPO_DEFAULTS = {
-    "base": "onnx-community/wav2vec2-base-960h-ONNX",
-    "large": "onnx-community/wav2vec2-large-960h-lv60-ONNX",
-}
-ASR_ONNX_REPO = os.environ.get(
-    "ASR_ONNX_REPO",
-    ASR_ONNX_REPO_DEFAULTS.get(ASR_MODEL, ASR_ONNX_REPO_DEFAULTS["base"]),
-)
+use_wav2vec2 = os.environ.get("USE_WAV2VEC2", "").lower() in {"1", "true", "yes", "on"}
+ASR_ENGINE = os.environ.get("ASR_ENGINE", "wav2vec2_onnx" if use_wav2vec2 else "whisper_pt").lower()
+ASR_MODEL_NAME = os.environ.get("ASR_MODEL_NAME", "facebook/wav2vec2-base-960h")
+ASR_ONNX_REPO = os.environ.get("ASR_ONNX_REPO", "onnx-community/wav2vec2-base-960h-ONNX")
 PUNCTUATE_TEXT = os.environ.get("PUNCTUATE_TEXT", "0").lower() in {"1", "true", "yes", "on"}
+TECH_NORMALIZE = os.environ.get("TECH_NORMALIZE", "0").lower() in {"1", "true", "yes", "on"}
 PUNCTUATION_MODEL = os.environ.get("PUNCTUATION_MODEL", "kredor/punctuate-all")
 
 # Initialize models
@@ -195,13 +187,12 @@ def initialize_models():
 
         # Initialize ASR engine
         if ASR_ENGINE == "wav2vec2_onnx":
-            asr_model_name = ASR_MODEL_MAP.get(ASR_MODEL, ASR_MODEL_MAP["base"])
-            logger.info(f"Loading Wav2Vec2 ONNX ASR model ({asr_model_name})...")
+            logger.info(f"Loading Wav2Vec2 ONNX ASR model ({ASR_MODEL_NAME})...")
             # Load processor for feature extraction + CTC labels
-            asr_processor = Wav2Vec2Processor.from_pretrained(asr_model_name)
+            asr_processor = Wav2Vec2Processor.from_pretrained(ASR_MODEL_NAME)
 
             # Try to locate/download ONNX model; if not present, download a ready-made ONNX repo.
-            default_onnx_path = f"asr_onnx/{asr_model_name.replace('/', '_')}.onnx"
+            default_onnx_path = f"asr_onnx/{ASR_MODEL_NAME.replace('/', '_')}.onnx"
             asr_onnx_path_env = os.environ.get("ASR_ONNX_PATH", default_onnx_path)
             if not os.path.exists(asr_onnx_path_env):
                 logger.info(f"ASR ONNX not found at {asr_onnx_path_env}. Attempting to download from {ASR_ONNX_REPO}...")
@@ -319,6 +310,90 @@ def restore_punctuation(text, max_words=120):
         chunk_text, capitalize_next = process_chunk(chunk, capitalize_next)
         out_parts.append(chunk_text)
     return " ".join(out_parts).strip()
+
+def normalize_tech_text(text):
+    """
+    Normalize spoken "tech" tokens (dot/com/slash/etc.) into symbols.
+    Intended for wav2vec2 output; Whisper already handles this better.
+    """
+    normalized = text
+
+    # Common domain suffixes
+    normalized = re.sub(r"\bdot com\b", ".com", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdot come\b", ".com", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdot comm\b", ".com", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdot net\b", ".net", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdot org\b", ".org", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdot io\b", ".io", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdot ai\b", ".ai", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdot co\b", ".co", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdot uk\b", ".uk", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdot dev\b", ".dev", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdot local\b", ".local", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\.\\s+(com|net|org|io|ai|co|uk|dev|local)\\b", r".\\1", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"(\\w)\\s+\\.(com|net|org|io|ai|co|uk|dev|local)\\b", r"\\1.\\2", normalized, flags=re.IGNORECASE)
+
+    # Symbols between tokens
+    normalized = re.sub(r"(?<=\\w)\\s+dot\\s+(?=\\w)", ".", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"(?<=\\w)\\s+at\\s+(?=\\w)", "@", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"(?<=\\w)\\s+colon\\s+(?=\\w)", ":", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"(?<=\\w)\\s+dash\\s+(?=\\w)", "-", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"(?<=\\w)\\s+hyphen\\s+(?=\\w)", "-", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bhyphen\\b", "-", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bunderscore\\b", "_", normalized, flags=re.IGNORECASE)
+
+    # Slashes
+    normalized = re.sub(r"\\bback\\s+slash\\b", r"\\\\", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bbackslash\\b", r"\\\\", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bbash\\b", r"\\\\", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bforward\\s+slash\\b", "/", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bslash\\b", "/", normalized, flags=re.IGNORECASE)
+
+    # Spoken punctuation tokens
+    normalized = re.sub(r"\\bcomma\\b", ",", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bperiod\\b", ".", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bquestion\\s+mark\\b", "?", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bexclamation\\s+point\\b", "!", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bexclamation\\s+mark\\b", "!", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bhash\\b", "#", normalized, flags=re.IGNORECASE)
+
+    # Collapse sequences of spoken digits into numbers (useful for IPs/ports).
+    num_map = {
+        "zero": "0",
+        "oh": "0",
+        "one": "1",
+        "two": "2",
+        "three": "3",
+        "four": "4",
+        "five": "5",
+        "six": "6",
+        "seven": "7",
+        "eight": "8",
+        "nine": "9",
+    }
+    parts = normalized.split()
+    out = []
+    buffer = []
+    for token in parts:
+        lower = token.lower()
+        if lower in num_map:
+            buffer.append(num_map[lower])
+            continue
+        if lower == ".":
+            buffer.append(".")
+            continue
+        if lower == "dot":
+            buffer.append(".")
+            continue
+        if buffer:
+            out.append("".join(buffer))
+            buffer = []
+        out.append(token)
+    if buffer:
+        out.append("".join(buffer))
+    normalized = " ".join(out)
+
+    return normalized
 
 # Health check endpoint
 @app.route('/health', methods=['GET'])
@@ -477,6 +552,13 @@ def transcribe_audio():
                     logger.info(f"Transcription (Punctuated): {transcription}")
                 except Exception as pe:
                     logger.warning(f"Punctuation restore failed: {pe}")
+
+            if TECH_NORMALIZE:
+                try:
+                    transcription = normalize_tech_text(transcription)
+                    logger.info(f"Transcription (Normalized): {transcription}")
+                except Exception as ne:
+                    logger.warning(f"Tech normalization failed: {ne}")
 
             return jsonify({"status": "success", "transcription": transcription})
         except Exception as e:

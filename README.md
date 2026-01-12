@@ -215,49 +215,48 @@ To run **NetworkMonitorKokoro** as a systemd service on Linux, follow these step
 
 ## ASR Engines
 
-- Engine selection via env var `ASR_ENGINE`:
-  - `wav2vec2_onnx` (default): Uses ONNXRuntime with a Wav2Vec2 CTC model (e.g., facebook/wav2vec2-base-960h).
-  - `whisper_pt`: Uses OpenAI Whisper (PyTorch) as in the original implementation.
+- Engine selection:
+  - Default is Whisper (`whisper_pt`).
+  - Set `USE_WAV2VEC2=1` to use the ONNX Wav2Vec2 pipeline.
+  - You can also override directly with `ASR_ENGINE=wav2vec2_onnx` or `ASR_ENGINE=whisper_pt`.
 
-- Wav2Vec2 model size:
-  - `ASR_MODEL=base` (default): `facebook/wav2vec2-base-960h`
-  - `ASR_MODEL=large`: `facebook/wav2vec2-large-960h-lv60`
+- Wav2Vec2 model selection:
+  - Default model: `facebook/wav2vec2-base-960h`
+  - Override the processor/model with `ASR_MODEL_NAME` if you want a different Wav2Vec2 model.
 
 - Wav2Vec2 ONNX model provisioning:
   - On first run, if `ASR_ONNX_PATH` does not exist, the app downloads a ready-made ONNX model from `ASR_ONNX_REPO` and stores it under `asr_onnx/<model_name>.onnx`.
-  - Defaults:
-    - `ASR_ONNX_REPO=onnx-community/wav2vec2-base-960h-ONNX` when `ASR_MODEL=base`
-    - `ASR_ONNX_REPO=onnx-community/wav2vec2-large-960h-lv60-ONNX` when `ASR_MODEL=large`
+  - Default: `ASR_ONNX_REPO=onnx-community/wav2vec2-base-960h-ONNX`
   - You can override the source repo via `ASR_ONNX_REPO` or the destination path via `ASR_ONNX_PATH`.
   - The model should take `input_values` (batch, samples) float32 at 16 kHz and output CTC logits `(batch, time, vocab)`.
   - Tokenizer: this app uses `Wav2Vec2Processor` from the matching Facebook model for feature extraction and decoding.
 
 - Optional punctuation restoration:
-  - Enable with `PUNCTUATE_TEXT=1`.
+  - Enable with `PUNCTUATE_TEXT=1` (default off).
   - Default model: `PUNCTUATION_MODEL=kredor/punctuate-all`.
   - This runs after ASR to add punctuation and casing to the raw transcript.
 
+- Optional tech normalization:
+  - Enable with `TECH_NORMALIZE=1` (default off).
+  - Converts spoken tokens like "dot/com/slash/at/colon" to symbols.
+
 - Example run with Wav2Vec2 ONNX:
   ```bash
-  export ASR_ENGINE=wav2vec2_onnx
-  export ASR_MODEL=base
+  export USE_WAV2VEC2=1
+  # optional: override processor/model or ONNX repo/path
+  # export ASR_MODEL_NAME=facebook/wav2vec2-base-960h
   # optional override of the source repo or ONNX path
   # export ASR_ONNX_REPO=onnx-community/wav2vec2-base-960h-ONNX
   # export ASR_ONNX_PATH=asr_onnx/custom.onnx
-  python3 app.py
-  ```
-
-- Example run with the large model:
-  ```bash
-  export ASR_ENGINE=wav2vec2_onnx
-  export ASR_MODEL=large
-  export PUNCTUATE_TEXT=1
+  # optional: post-processing
+  # export PUNCTUATE_TEXT=1
+  # export TECH_NORMALIZE=1
   python3 app.py
   ```
 
 - Example run with Whisper fallback:
   ```bash
-  export ASR_ENGINE=whisper_pt
+  # default is whisper, so no flags needed
   python3 app.py
   ```
 
@@ -275,7 +274,7 @@ To run **NetworkMonitorKokoro** as a systemd service on Linux, follow these step
 - Concurrency: the app uses a global lock so only one synthesis/transcription runs at a time. Internal math libraries and ONNX Runtime are also constrained to a small thread count (`MAX_THREADS=2`).
 - Models:
   - T2S uses `onnx-community/Kokoro-82M-v1.0-ONNX`. The ONNX file `model.onnx` and voice style binary (e.g., `am_adam.bin`) are downloaded via `huggingface_hub` on first run and then cached under `kokoro_model/`.
-  - S2T defaults to Wav2Vec2 ONNX (`ASR_MODEL=base` or `large`) and can be switched to Whisper with `ASR_ENGINE=whisper_pt`.
+  - S2T defaults to Whisper and can be switched to Wav2Vec2 ONNX with `USE_WAV2VEC2=1`.
 - Caching: generated audio is content-addressed by `sha256(preprocessed_text)`; repeated requests for the same text return the existing filename without recomputation.
 - File location: generated WAV files are saved to `$SERVE_DIR` (default `./files`).
 
