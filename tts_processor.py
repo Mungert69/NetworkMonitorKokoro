@@ -205,19 +205,25 @@ def replace_invalid_chars(string):
 
 # Replace numbers with their word equivalents
 def replace_numbers(string):
-    ipv4_pattern = r'(\b\d{1,3}(\.\d{1,3}){3}\b)'
-    ipv6_pattern = r'([0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}'
+    ipv4_pattern = r'\b\d{1,3}(?:\.\d{1,3}){3}\b'
+    ipv6_pattern = r'\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}\b'
     range_pattern = r'\b\d+-\d+\b'  # Detect ranges like 1-4
     date_pattern = r'\b\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2})?\b'
     alphanumeric_pattern = r'\b[A-Za-z]+\d+|\d+[A-Za-z]+\b'
 
-    # Do not process IP addresses, date patterns, or alphanumerics
-    if re.search(ipv4_pattern, string) or re.search(ipv6_pattern, string) or re.search(range_pattern, string) or re.search(date_pattern, string) or re.search(alphanumeric_pattern, string):
-        return string
+    skip_spans = []
+    for pattern in [ipv4_pattern, ipv6_pattern, range_pattern, date_pattern, alphanumeric_pattern]:
+        for match in re.finditer(pattern, string):
+            skip_spans.append((match.start(), match.end()))
+
+    def is_skipped(start, end):
+        return any(start >= s and end <= e for s, e in skip_spans)
 
     # Convert standalone numbers and port numbers
     def convert_number(match):
         number = match.group()
+        if is_skipped(match.start(), match.end()):
+            return number
         return num2words(int(number)).replace("-", " ") if number.isdigit() else number
 
     pattern = re.compile(r'\b\d+\b')

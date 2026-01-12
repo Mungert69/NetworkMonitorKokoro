@@ -27,6 +27,11 @@ class TestTtsProcessor(unittest.TestCase):
         out = preprocess_all(text)
         self.assertIn("twenty four", out)
 
+    def test_mail_port_regression(self):
+        text = "mail.mahadeva.co.uk - SMTP endpoint on port 25, Agent: Berlin - Germany"
+        out = preprocess_all(text)
+        self.assertIn("port twenty five", out)
+
     def test_double_dash(self):
         text = "Use --testmode for debug"
         out = preprocess_all(text)
