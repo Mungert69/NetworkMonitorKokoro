@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, send_from_directory, abort
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
-from transformers import Wav2Vec2Processor
+from transformers import Wav2Vec2Processor, AutoTokenizer, AutoModelForTokenClassification
 import librosa
 import torch
 import numpy as np
@@ -134,11 +134,26 @@ def is_cached(cached_file_path):
     return exists
 
 ASR_ENGINE = os.environ.get("ASR_ENGINE", "wav2vec2_onnx").lower()
-ASR_ONNX_REPO = os.environ.get("ASR_ONNX_REPO", "onnx-community/wav2vec2-base-960h-ONNX")
+ASR_MODEL = os.environ.get("ASR_MODEL", "base").lower()
+ASR_MODEL_MAP = {
+    "base": "facebook/wav2vec2-base-960h",
+    "large": "facebook/wav2vec2-large-960h-lv60",
+}
+ASR_ONNX_REPO_DEFAULTS = {
+    "base": "onnx-community/wav2vec2-base-960h-ONNX",
+    "large": "onnx-community/wav2vec2-large-960h-lv60-ONNX",
+}
+ASR_ONNX_REPO = os.environ.get(
+    "ASR_ONNX_REPO",
+    ASR_ONNX_REPO_DEFAULTS.get(ASR_MODEL, ASR_ONNX_REPO_DEFAULTS["base"]),
+)
+PUNCTUATE_TEXT = os.environ.get("PUNCTUATE_TEXT", "0").lower() in {"1", "true", "yes", "on"}
+PUNCTUATION_MODEL = os.environ.get("PUNCTUATION_MODEL", "kredor/punctuate-all")
 
 # Initialize models
 def initialize_models():
     global sess, voice_style, processor, whisper_model, asr_session, asr_processor
+    global punctuation_model, punctuation_tokenizer
 
     try:
         # Download the ONNX model if not already downloaded
@@ -180,14 +195,14 @@ def initialize_models():
 
         # Initialize ASR engine
         if ASR_ENGINE == "wav2vec2_onnx":
-            logger.info("Loading Wav2Vec2 ONNX ASR model (facebook/wav2vec2-base-960h)...")
+            asr_model_name = ASR_MODEL_MAP.get(ASR_MODEL, ASR_MODEL_MAP["base"])
+            logger.info(f"Loading Wav2Vec2 ONNX ASR model ({asr_model_name})...")
             # Load processor for feature extraction + CTC labels
-            asr_processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
+            asr_processor = Wav2Vec2Processor.from_pretrained(asr_model_name)
 
-            # Try to locate/download ONNX model; if not present, export path would be required.
-            # For simplicity, we rely on an already-exported ONNX at ./asr_onnx/model.onnx if provided.
-            # If not found, fall back to ORT's optimized model via HF Optimum export guidance.
-            asr_onnx_path_env = os.environ.get("ASR_ONNX_PATH", "asr_onnx/model.onnx")
+            # Try to locate/download ONNX model; if not present, download a ready-made ONNX repo.
+            default_onnx_path = f"asr_onnx/{asr_model_name.replace('/', '_')}.onnx"
+            asr_onnx_path_env = os.environ.get("ASR_ONNX_PATH", default_onnx_path)
             if not os.path.exists(asr_onnx_path_env):
                 logger.info(f"ASR ONNX not found at {asr_onnx_path_env}. Attempting to download from {ASR_ONNX_REPO}...")
                 try:
@@ -231,12 +246,79 @@ def initialize_models():
             whisper_model.config.forced_decoder_ids = None
             logger.info("Whisper model loaded successfully")
 
+        if PUNCTUATE_TEXT:
+            logger.info(f"Loading punctuation model ({PUNCTUATION_MODEL})...")
+            punctuation_tokenizer = AutoTokenizer.from_pretrained(PUNCTUATION_MODEL)
+            punctuation_model = AutoModelForTokenClassification.from_pretrained(PUNCTUATION_MODEL)
+            punctuation_model.eval()
+            logger.info("Punctuation model loaded successfully")
+
     except Exception as e:
         logger.error(f"Error initializing models: {str(e)}")
         raise
 
 # Initialize models
 initialize_models()
+
+def restore_punctuation(text, max_words=120):
+    if not PUNCTUATE_TEXT:
+        return text
+    if "punctuation_model" not in globals() or punctuation_model is None:
+        return text
+    words = text.strip().lower().split()
+    if not words:
+        return text
+
+    label_to_punct = {
+        "O": "",
+        "COMMA": ",",
+        "PERIOD": ".",
+        "QUESTION": "?",
+        "EXCLAMATION": "!",
+        "COLON": ":",
+        "SEMICOLON": ";",
+    }
+
+    def process_chunk(chunk_words, capitalize_next):
+        inputs = punctuation_tokenizer(
+            chunk_words,
+            is_split_into_words=True,
+            return_tensors="pt",
+            truncation=True,
+        )
+        with torch.no_grad():
+            logits = punctuation_model(**inputs).logits
+        pred_ids = torch.argmax(logits, dim=-1)[0].tolist()
+        word_ids = inputs.word_ids()
+        last_word = -1
+        word_end_labels = {}
+        for idx, word_id in enumerate(word_ids):
+            if word_id is None:
+                continue
+            if word_id != last_word:
+                last_word = word_id
+            word_end_labels[word_id] = pred_ids[idx]
+
+        decoded = []
+        for i, word in enumerate(chunk_words):
+            label_id = word_end_labels.get(i)
+            label = punctuation_model.config.id2label.get(label_id, "O")
+            punct = label_to_punct.get(label, "")
+            if capitalize_next and word:
+                word = word[0].upper() + word[1:]
+                capitalize_next = False
+            decoded.append(word + punct)
+            if punct in {".", "?", "!"}:
+                capitalize_next = True
+        return " ".join(decoded), capitalize_next
+
+    out_parts = []
+    capitalize_next = True
+    for i in range(0, len(words), max_words):
+        chunk = words[i:i + max_words]
+        chunk_text, capitalize_next = process_chunk(chunk, capitalize_next)
+        out_parts.append(chunk_text)
+    return " ".join(out_parts).strip()
 
 # Health check endpoint
 @app.route('/health', methods=['GET'])
@@ -388,6 +470,13 @@ def transcribe_audio():
                 predicted_ids = whisper_model.generate(input_features)
                 transcription = processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
                 logger.info(f"Transcription (Whisper): {transcription}")
+
+            if PUNCTUATE_TEXT:
+                try:
+                    transcription = restore_punctuation(transcription)
+                    logger.info(f"Transcription (Punctuated): {transcription}")
+                except Exception as pe:
+                    logger.warning(f"Punctuation restore failed: {pe}")
 
             return jsonify({"status": "success", "transcription": transcription})
         except Exception as e:

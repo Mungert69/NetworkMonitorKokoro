@@ -12,5 +12,7 @@ Nice=-10
 CPUSchedulingPolicy=fifo 
 CPUSchedulingPriority=1
 Environment=SERVE_DIR=/home/audioservice/app/files   
+Environment=ASR_MODEL=large
+Environment=PUNCTUATE_TEXT=1
 [Install]
 WantedBy=multi-user.target
