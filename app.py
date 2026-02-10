@@ -71,6 +71,7 @@ LFM_AUDIO_DETOKENIZER = os.environ.get("LFM_AUDIO_DETOKENIZER", "")
 LFM_VOCODER_DEPTHFORMER = os.environ.get("LFM_VOCODER_DEPTHFORMER", "")
 lfm_model_dir = None
 lfm_onnx_dir = None
+lfm_files = {}
 
 # Directory to serve files from
 default_serve_dir = os.path.join(os.path.expanduser("~"), "app", "files")
@@ -99,13 +100,47 @@ def is_cached(cached_file_path):
     file_cache[cached_file_path] = exists  # Update the cache
     return exists
 
-def resolve_lfm_model_dir(base_dir):
+def resolve_lfm_model_root(base_dir):
+    if os.path.isfile(os.path.join(base_dir, "config.json")):
+        return base_dir
+    for root, _, files in os.walk(base_dir):
+        if "config.json" in files:
+            return root
+    return base_dir
+
+def resolve_lfm_onnx_dir(base_dir):
     if os.path.isdir(os.path.join(base_dir, "onnx")):
         return os.path.join(base_dir, "onnx")
     for root, dirs, _ in os.walk(base_dir):
         if "onnx" in dirs:
             return os.path.join(root, "onnx")
     return base_dir
+
+def pick_file(candidates, precision):
+    if not candidates:
+        return ""
+    # prefer precision-specific file, then any candidate
+    for cand in candidates:
+        if f"_{precision}" in os.path.basename(cand):
+            return cand
+    return candidates[0]
+
+def discover_lfm_files(onnx_dir, precision):
+    if not onnx_dir or not os.path.isdir(onnx_dir):
+        return {}
+    def glob_one(prefix):
+        return sorted(
+            [os.path.join(onnx_dir, f) for f in os.listdir(onnx_dir) if f.startswith(prefix) and f.endswith(".onnx")]
+        )
+    files = {
+        "decoder": pick_file(glob_one("decoder"), precision),
+        "audio_embedding": pick_file(glob_one("audio_embedding"), precision),
+        "audio_encoder": pick_file(glob_one("audio_encoder"), precision),
+        "audio_detokenizer": pick_file(glob_one("audio_detokenizer"), precision),
+        "vocoder_depthformer": pick_file(glob_one("vocoder_depthformer"), precision),
+    }
+    # Drop missing
+    return {k: v for k, v in files.items() if v}
 
 def build_lfm_command(prompt_text, output_path):
     cmd = shlex.split(LFM_RUNNER)
@@ -118,6 +153,16 @@ def build_lfm_command(prompt_text, output_path):
         "--prompt", prompt_text,
         "--output", output_path,
     ]
+    if lfm_files.get("decoder"):
+        cmd += ["--decoder", lfm_files["decoder"]]
+    if lfm_files.get("audio_embedding"):
+        cmd += ["--audio-embedding", lfm_files["audio_embedding"]]
+    if lfm_files.get("audio_encoder"):
+        cmd += ["--audio-encoder", lfm_files["audio_encoder"]]
+    if lfm_files.get("audio_detokenizer"):
+        cmd += ["--audio-detokenizer", lfm_files["audio_detokenizer"]]
+    if lfm_files.get("vocoder_depthformer"):
+        cmd += ["--vocoder-depthformer", lfm_files["vocoder_depthformer"]]
     if LFM_SYSTEM_PROMPT:
         cmd += ["--system", LFM_SYSTEM_PROMPT]
     if LFM_MAX_TOKENS:
@@ -176,7 +221,7 @@ ASR_ONNX_REPO = os.environ.get("ASR_ONNX_REPO", "onnx-community/wav2vec2-base-96
 # Initialize models
 def initialize_models():
     global processor, whisper_model, asr_session, asr_processor
-    global lfm_model_dir
+    global lfm_model_dir, lfm_onnx_dir, lfm_files
 
     try:
         # Download the LFM2.5 Audio ONNX model if not already downloaded
@@ -188,9 +233,14 @@ def initialize_models():
             lfm_model_dir = LFM_MODEL_DIR
             logger.info(f"Using cached LFM model directory: {lfm_model_dir}")
 
-        # Resolve the repo root that contains the onnx/ folder (if nested)
-        lfm_model_dir = resolve_lfm_model_dir(lfm_model_dir)
+        # Resolve model root (config.json) and onnx dir
+        lfm_model_dir = resolve_lfm_model_root(lfm_model_dir)
+        lfm_onnx_dir = resolve_lfm_onnx_dir(lfm_model_dir)
+        lfm_files = discover_lfm_files(lfm_onnx_dir, LFM_PRECISION)
         logger.info(f"Resolved LFM model directory: {lfm_model_dir}")
+        logger.info(f"Resolved LFM ONNX directory: {lfm_onnx_dir}")
+        if lfm_files:
+            logger.info(f"LFM ONNX files: {lfm_files}")
         try:
             ensure_lfm_runner()
         except Exception as re:
