@@ -59,7 +59,6 @@ mkdir -p "$MODEL_DIR" "$RUNNER_DIR"
 # Download GGUF model files
 ${HF_CLI} download LiquidAI/LFM2.5-Audio-1.5B-GGUF \
   --local-dir "$MODEL_DIR" \
-  --local-dir-use-symlinks False \
   --include "LFM2.5-Audio-1.5B-Q4_0.gguf" \
   --include "mmproj-LFM2.5-Audio-1.5B-Q4_0.gguf" \
   --include "vocoder-LFM2.5-Audio-1.5B-Q4_0.gguf" \
@@ -68,7 +67,6 @@ ${HF_CLI} download LiquidAI/LFM2.5-Audio-1.5B-GGUF \
 # Download runner zip
 ${HF_CLI} download LiquidAI/LFM2.5-Audio-1.5B-GGUF \
   --local-dir "$RUNNER_DIR" \
-  --local-dir-use-symlinks False \
   --include "runners/${ZIP_NAME}"
 
 # Extract runner
