@@ -18,5 +18,6 @@ Environment=TECH_NORMALIZE=0
 Environment=TTS_BACKEND=gguf
 Environment=ASR_BACKEND=gguf
 Environment=GGUF_SERVER_URL=http://127.0.0.1:8080/v1
+Environment=PORT=7860
 [Install]
 WantedBy=multi-user.target

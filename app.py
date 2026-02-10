@@ -572,4 +572,5 @@ def internal_error(error):
     return {"error": "Internal Server Error", "message": "An unexpected error occurred."}, 500
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=7860, threaded=False, processes=1)
+    port = int(os.environ.get("PORT", "7860"))
+    app.run(host="0.0.0.0", port=port, threaded=False, processes=1)

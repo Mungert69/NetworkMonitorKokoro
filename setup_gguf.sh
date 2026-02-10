@@ -83,7 +83,7 @@ if [ -z "$GGUF_BIN" ]; then
   exit 1
 fi
 
-# Write gguf_server.service
+# Write gguf_server.service (fully expanded paths)
 cat > "$SERVICE_DIR/gguf_server.service" <<EOF_SERVICE
 [Unit]
 Description=GGUF Audio Server (llama-liquid-audio-server)
@@ -93,13 +93,7 @@ After=network.target
 Type=simple
 User=audioservice
 WorkingDirectory=/home/audioservice
-Environment=GGUF_MODEL=${MODEL_DIR}/LFM2.5-Audio-1.5B-Q4_0.gguf
-Environment=GGUF_MMPROJ=${MODEL_DIR}/mmproj-LFM2.5-Audio-1.5B-Q4_0.gguf
-Environment=GGUF_VOCODER=${MODEL_DIR}/vocoder-LFM2.5-Audio-1.5B-Q4_0.gguf
-Environment=GGUF_TOKENIZER=${MODEL_DIR}/tokenizer-LFM2.5-Audio-1.5B-Q4_0.gguf
-Environment=GGUF_HOST=${GGUF_HOST}
-Environment=GGUF_PORT=${GGUF_PORT}
-ExecStart=/bin/sh -lc '${GGUF_BIN} -m "$$GGUF_MODEL" -mm "$$GGUF_MMPROJ" -mv "$$GGUF_VOCODER" --tts-speaker-file "$$GGUF_TOKENIZER" --host "$$GGUF_HOST" --port "$$GGUF_PORT"'
+ExecStart=${GGUF_BIN} -m ${MODEL_DIR}/LFM2.5-Audio-1.5B-Q4_0.gguf -mm ${MODEL_DIR}/mmproj-LFM2.5-Audio-1.5B-Q4_0.gguf -mv ${MODEL_DIR}/vocoder-LFM2.5-Audio-1.5B-Q4_0.gguf --tts-speaker-file ${MODEL_DIR}/tokenizer-LFM2.5-Audio-1.5B-Q4_0.gguf --host ${GGUF_HOST} --port ${GGUF_PORT}
 Restart=always
 RestartSec=2
 
@@ -128,6 +122,7 @@ Environment=USE_WAV2VEC2=0
 Environment=TTS_BACKEND=gguf
 Environment=ASR_BACKEND=gguf
 Environment=GGUF_SERVER_URL=http://${GGUF_HOST}:${GGUF_PORT}/v1
+Environment=PORT=7860
 
 [Install]
 WantedBy=multi-user.target
