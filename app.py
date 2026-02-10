@@ -5,7 +5,6 @@ import librosa
 import torch
 import numpy as np
 from onnxruntime import InferenceSession
-import os
 import logging
 from flask_cors import CORS
 import threading
@@ -54,7 +53,11 @@ LFM_MODEL_ID = os.environ.get("LFM_MODEL_ID", "LiquidAI/LFM2.5-Audio-1.5B-ONNX")
 LFM_MODEL_DIR = os.environ.get("LFM_MODEL_DIR", "lfm_audio_model")
 LFM_PRECISION = os.environ.get("LFM_PRECISION", "q4")
 LFM_SYSTEM_PROMPT = os.environ.get("LFM_SYSTEM_PROMPT", "Perform TTS. Use the UK female voice.")
-LFM_RUNNER = os.environ.get("LFM_RUNNER", "lfm2-audio-infer")
+LFM_RUNNER = os.environ.get("LFM_RUNNER", "uv run lfm2-audio-infer")
+LFM_RUNNER_REPO = os.environ.get("LFM_RUNNER_REPO", "https://github.com/Liquid4All/onnx-export.git")
+LFM_RUNNER_DIR = os.environ.get("LFM_RUNNER_DIR", "lfm_runner")
+LFM_RUNNER_CWD = os.environ.get("LFM_RUNNER_CWD", LFM_RUNNER_DIR)
+LFM_BOOTSTRAP = os.environ.get("LFM_BOOTSTRAP", "1").lower() in {"1", "true", "yes", "on"}
 LFM_TIMEOUT_SEC = int(os.environ.get("LFM_TIMEOUT_SEC", "300"))
 LFM_AUDIO_TEMPERATURE = os.environ.get("LFM_AUDIO_TEMPERATURE", "1.0")
 LFM_AUDIO_TOP_K = os.environ.get("LFM_AUDIO_TOP_K", "2000")
@@ -115,6 +118,33 @@ def build_lfm_command(prompt_text, output_path):
         cmd += ["--audio-top-k", str(LFM_AUDIO_TOP_K)]
     return cmd
 
+def ensure_lfm_runner():
+    runner_exe = shlex.split(LFM_RUNNER)[0]
+    if shutil.which(runner_exe) is not None:
+        return
+    if not LFM_BOOTSTRAP:
+        return
+    if shutil.which("git") is None:
+        raise RuntimeError("git is required to bootstrap LFM runner")
+    if not os.path.exists(LFM_RUNNER_DIR):
+        logger.info(f"Cloning LFM ONNX runner repo to {LFM_RUNNER_DIR}...")
+        subprocess.run(
+            ["git", "clone", LFM_RUNNER_REPO, LFM_RUNNER_DIR],
+            check=True,
+        )
+    if shutil.which("uv") is None:
+        logger.info("Installing uv for LFM runner bootstrap...")
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--user", "uv"],
+            check=True,
+        )
+    logger.info("Syncing LFM runner dependencies with uv...")
+    subprocess.run(
+        ["uv", "sync"],
+        cwd=LFM_RUNNER_DIR,
+        check=True,
+    )
+
 use_wav2vec2 = os.environ.get("USE_WAV2VEC2", "").lower() in {"1", "true", "yes", "on"}
 ASR_ENGINE = os.environ.get("ASR_ENGINE", "wav2vec2_onnx" if use_wav2vec2 else "whisper_pt").lower()
 ASR_MODEL_NAME = os.environ.get("ASR_MODEL_NAME", "facebook/wav2vec2-base-960h")
@@ -138,9 +168,10 @@ def initialize_models():
         # Resolve the repo root that contains the onnx/ folder (if nested)
         lfm_model_dir = resolve_lfm_model_dir(lfm_model_dir)
         logger.info(f"Resolved LFM model directory: {lfm_model_dir}")
-        runner_exe = shlex.split(LFM_RUNNER)[0]
-        if shutil.which(runner_exe) is None:
-            logger.warning(f"LFM runner not found in PATH: {runner_exe}")
+        try:
+            ensure_lfm_runner()
+        except Exception as re:
+            logger.warning(f"LFM runner bootstrap skipped/failed: {re}")
 
         # Initialize ASR engine
         if ASR_ENGINE == "wav2vec2_onnx":
@@ -237,6 +268,7 @@ def generate_audio():
             logger.info(f"Running LFM audio inference: {' '.join(cmd)}")
             result = subprocess.run(
                 cmd,
+                cwd=LFM_RUNNER_CWD if LFM_RUNNER_CWD else None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
