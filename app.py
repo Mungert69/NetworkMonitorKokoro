@@ -95,10 +95,10 @@ def is_cached(cached_file_path):
 
 def resolve_lfm_model_dir(base_dir):
     if os.path.isdir(os.path.join(base_dir, "onnx")):
-        return base_dir
+        return os.path.join(base_dir, "onnx")
     for root, dirs, _ in os.walk(base_dir):
         if "onnx" in dirs:
-            return root
+            return os.path.join(root, "onnx")
     return base_dir
 
 def build_lfm_command(prompt_text, output_path):
