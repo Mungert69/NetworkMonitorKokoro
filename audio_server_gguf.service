@@ -1,0 +1,22 @@
+[Unit]
+Description=Audio Server (GGUF)
+After=network.target
+
+[Service]
+ExecStart=/home/audioservice/code/services/kokoro/venv/bin/python3 /home/audioservice/code/services/kokoro/app.py
+WorkingDirectory=/home/audioservice/code/services/kokoro
+Restart=always
+User=audioservice
+Environment=PYTHONUNBUFFERED=1
+Nice=-10
+CPUSchedulingPolicy=fifo 
+CPUSchedulingPriority=1
+Environment=SERVE_DIR=/home/audioservice/app/files   
+Environment=USE_WAV2VEC2=0
+Environment=PUNCTUATE_TEXT=0
+Environment=TECH_NORMALIZE=0
+Environment=TTS_BACKEND=gguf
+Environment=ASR_BACKEND=gguf
+Environment=GGUF_SERVER_URL=http://127.0.0.1:8080/v1
+[Install]
+WantedBy=multi-user.target

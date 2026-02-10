@@ -1,0 +1,20 @@
+[Unit]
+Description=GGUF Audio Server (llama-liquid-audio-server)
+After=network.target
+
+[Service]
+Type=simple
+User=audioservice
+WorkingDirectory=/home/audioservice
+Environment=GGUF_CKPT=/home/audioservice/models/LFM2.5-Audio-1.5B-GGUF
+Environment=GGUF_BIN=/home/audioservice/llama.cpp/llama-liquid-audio-server
+Environment=GGUF_MODEL=/home/audioservice/models/LFM2.5-Audio-1.5B-GGUF/LFM2.5-Audio-1.5B-Q4_0.gguf
+Environment=GGUF_MMPROJ=/home/audioservice/models/LFM2.5-Audio-1.5B-GGUF/mmproj-LFM2.5-Audio-1.5B-Q4_0.gguf
+Environment=GGUF_VOCODER=/home/audioservice/models/LFM2.5-Audio-1.5B-GGUF/vocoder-LFM2.5-Audio-1.5B-Q4_0.gguf
+Environment=GGUF_TOKENIZER=/home/audioservice/models/LFM2.5-Audio-1.5B-GGUF/tokenizer-LFM2.5-Audio-1.5B-Q4_0.gguf
+ExecStart=${GGUF_BIN} -m ${GGUF_MODEL} -mm ${GGUF_MMPROJ} -mv ${GGUF_VOCODER} --tts-speaker-file ${GGUF_TOKENIZER}
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -13,7 +13,6 @@ import threading
 import tempfile
 import subprocess
 import shutil
-import base64
 from pathlib import Path
 from huggingface_hub import snapshot_download
 import hashlib
@@ -52,14 +51,6 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 global_lock = threading.Lock()
 
 # Repository ID and paths (LFM2.5 Audio ONNX)
-TTS_BACKEND = os.environ.get("TTS_BACKEND", "lfm_onnx").lower()  # lfm_onnx | gguf
-ASR_BACKEND = ""  # resolved after USE_WAV2VEC2
-GGUF_SERVER_URL = os.environ.get("GGUF_SERVER_URL", "http://127.0.0.1:8080/v1")
-GGUF_SYSTEM_TTS = os.environ.get("GGUF_SYSTEM_TTS", "Perform TTS. Use the UK female voice.")
-GGUF_SYSTEM_ASR = os.environ.get("GGUF_SYSTEM_ASR", "Perform ASR.")
-GGUF_MAX_TOKENS = int(os.environ.get("GGUF_MAX_TOKENS", "1024"))
-GGUF_AUDIO_SAMPLE_RATE = int(os.environ.get("GGUF_AUDIO_SAMPLE_RATE", "24000"))
-
 LFM_MODEL_ID = os.environ.get("LFM_MODEL_ID", "LiquidAI/LFM2.5-Audio-1.5B-ONNX")
 LFM_MODEL_DIR = os.environ.get("LFM_MODEL_DIR", "lfm_audio_model")
 LFM_PRECISION = os.environ.get("LFM_PRECISION", "q4")
@@ -85,7 +76,6 @@ lfm_model = None
 LFM2AudioInference = None
 audio_codes_to_wav = None
 resolve_precision_files = None
-gguf_client = None
 
 # Directory to serve files from
 default_serve_dir = os.path.join(os.path.expanduser("~"), "app", "files")
@@ -167,85 +157,8 @@ def ensure_lfm_python():
         resolve_precision_files,
     )
 
-def get_gguf_client():
-    global gguf_client
-    if gguf_client is not None:
-        return gguf_client
-    try:
-        from openai import OpenAI  # type: ignore
-    except Exception as e:
-        raise RuntimeError("openai package is required for GGUF backend") from e
-    gguf_client = OpenAI(base_url=GGUF_SERVER_URL, api_key="dummy")
-    return gguf_client
-
-def write_wav_from_float32(samples, output_path, sample_rate):
-    import wave
-    pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
-    with wave.open(output_path, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(pcm.tobytes())
-
-def gguf_tts(text, output_path):
-    client = get_gguf_client()
-    messages = [
-        {"role": "system", "content": GGUF_SYSTEM_TTS},
-        {"role": "user", "content": text},
-    ]
-    stream = client.chat.completions.create(
-        model="",
-        messages=messages,
-        max_tokens=GGUF_MAX_TOKENS,
-        stream=True,
-        extra_body={"reset_context": True},
-    )
-    chunks = []
-    for chunk in stream:
-        delta = chunk.choices[0].delta
-        audio_chunk = getattr(delta, "audio_chunk", None)
-        if audio_chunk and isinstance(audio_chunk, dict):
-            data = audio_chunk.get("data")
-            if data:
-                raw = base64.b64decode(data)
-                chunks.append(np.frombuffer(raw, dtype=np.float32))
-    if not chunks:
-        raise RuntimeError("GGUF TTS produced no audio")
-    audio = np.concatenate(chunks, axis=0)
-    write_wav_from_float32(audio, output_path, GGUF_AUDIO_SAMPLE_RATE)
-
-def gguf_asr(wav_path):
-    client = get_gguf_client()
-    with open(wav_path, "rb") as f:
-        wav_b64 = base64.b64encode(f.read()).decode("utf-8")
-    messages = [
-        {"role": "system", "content": GGUF_SYSTEM_ASR},
-        {
-            "role": "user",
-            "content": [
-                {"type": "input_audio", "input_audio": {"data": wav_b64, "format": "wav"}}
-            ],
-        },
-    ]
-    stream = client.chat.completions.create(
-        model="",
-        messages=messages,
-        max_tokens=GGUF_MAX_TOKENS,
-        stream=True,
-        extra_body={"reset_context": True},
-    )
-    parts = []
-    for chunk in stream:
-        delta = chunk.choices[0].delta
-        if delta and getattr(delta, "content", None):
-            parts.append(delta.content)
-    return "".join(parts).strip()
-
 use_wav2vec2 = os.environ.get("USE_WAV2VEC2", "").lower() in {"1", "true", "yes", "on"}
-ASR_BACKEND = os.environ.get("ASR_BACKEND", "")
-if not ASR_BACKEND:
-    ASR_BACKEND = "wav2vec2_onnx" if use_wav2vec2 else "whisper_pt"
-ASR_BACKEND = ASR_BACKEND.lower()
+ASR_ENGINE = os.environ.get("ASR_ENGINE", "wav2vec2_onnx" if use_wav2vec2 else "whisper_pt").lower()
 ASR_MODEL_NAME = os.environ.get("ASR_MODEL_NAME", "facebook/wav2vec2-base-960h")
 ASR_ONNX_REPO = os.environ.get("ASR_ONNX_REPO", "onnx-community/wav2vec2-base-960h-ONNX")
 
@@ -255,56 +168,55 @@ def initialize_models():
     global lfm_model_dir, lfm_onnx_dir, lfm_files, lfm_model
 
     try:
-        if TTS_BACKEND == "lfm_onnx":
-            # Download the LFM2.5 Audio ONNX model into a real local directory (no symlinks)
-            config_path = os.path.join(LFM_MODEL_DIR, "config.json")
-            if not os.path.isfile(config_path):
-                logger.info("Downloading LFM2.5 Audio ONNX model (materialized, no symlinks)...")
-                lfm_model_dir = snapshot_download(
-                    LFM_MODEL_ID,
-                    local_dir=LFM_MODEL_DIR,
-                    local_dir_use_symlinks=False,
-                )
-                logger.info(f"LFM model directory: {lfm_model_dir}")
-            else:
-                lfm_model_dir = LFM_MODEL_DIR
-                logger.info(f"Using cached LFM model directory: {lfm_model_dir}")
-
-            # Resolve model root (config.json) and onnx dir
-            lfm_model_dir = resolve_lfm_model_root(lfm_model_dir)
-            lfm_onnx_dir = resolve_lfm_onnx_dir(lfm_model_dir)
-            logger.info(f"Resolved LFM model directory: {lfm_model_dir}")
-            logger.info(f"Resolved LFM ONNX directory: {lfm_onnx_dir}")
-
-            # Ensure python module for in-process inference is available
-            ensure_lfm_python()
-
-            # Resolve ONNX filenames for selected precision
-            lfm_files = resolve_precision_files(LFM_PRECISION)
-            if LFM_DECODER:
-                lfm_files["decoder"] = LFM_DECODER
-            if LFM_AUDIO_EMBEDDING:
-                lfm_files["audio_embedding"] = LFM_AUDIO_EMBEDDING
-            if LFM_AUDIO_ENCODER:
-                lfm_files["audio_encoder"] = LFM_AUDIO_ENCODER
-            if LFM_AUDIO_DETOKENIZER:
-                lfm_files["audio_detokenizer"] = LFM_AUDIO_DETOKENIZER
-            if LFM_VOCODER_DEPTHFORMER:
-                lfm_files["vocoder_depthformer"] = LFM_VOCODER_DEPTHFORMER
-            if not LFM_LOAD_AUDIO_ENCODER:
-                lfm_files["audio_encoder"] = "audio_encoder.DISABLED.onnx"
-
-            lfm_model = LFM2AudioInference(
-                Path(lfm_model_dir),
-                decoder_file=lfm_files.get("decoder"),
-                audio_embedding_file=lfm_files.get("audio_embedding"),
-                audio_encoder_file=lfm_files.get("audio_encoder"),
-                audio_detokenizer_file=lfm_files.get("audio_detokenizer"),
-                vocoder_depthformer_file=lfm_files.get("vocoder_depthformer"),
+        # Download the LFM2.5 Audio ONNX model into a real local directory (no symlinks)
+        config_path = os.path.join(LFM_MODEL_DIR, "config.json")
+        if not os.path.isfile(config_path):
+            logger.info("Downloading LFM2.5 Audio ONNX model (materialized, no symlinks)...")
+            lfm_model_dir = snapshot_download(
+                LFM_MODEL_ID,
+                local_dir=LFM_MODEL_DIR,
+                local_dir_use_symlinks=False,
             )
+            logger.info(f"LFM model directory: {lfm_model_dir}")
+        else:
+            lfm_model_dir = LFM_MODEL_DIR
+            logger.info(f"Using cached LFM model directory: {lfm_model_dir}")
+
+        # Resolve model root (config.json) and onnx dir
+        lfm_model_dir = resolve_lfm_model_root(lfm_model_dir)
+        lfm_onnx_dir = resolve_lfm_onnx_dir(lfm_model_dir)
+        logger.info(f"Resolved LFM model directory: {lfm_model_dir}")
+        logger.info(f"Resolved LFM ONNX directory: {lfm_onnx_dir}")
+
+        # Ensure python module for in-process inference is available
+        ensure_lfm_python()
+
+        # Resolve ONNX filenames for selected precision
+        lfm_files = resolve_precision_files(LFM_PRECISION)
+        if LFM_DECODER:
+            lfm_files["decoder"] = LFM_DECODER
+        if LFM_AUDIO_EMBEDDING:
+            lfm_files["audio_embedding"] = LFM_AUDIO_EMBEDDING
+        if LFM_AUDIO_ENCODER:
+            lfm_files["audio_encoder"] = LFM_AUDIO_ENCODER
+        if LFM_AUDIO_DETOKENIZER:
+            lfm_files["audio_detokenizer"] = LFM_AUDIO_DETOKENIZER
+        if LFM_VOCODER_DEPTHFORMER:
+            lfm_files["vocoder_depthformer"] = LFM_VOCODER_DEPTHFORMER
+        if not LFM_LOAD_AUDIO_ENCODER:
+            lfm_files["audio_encoder"] = "audio_encoder.DISABLED.onnx"
+
+        lfm_model = LFM2AudioInference(
+            Path(lfm_model_dir),
+            decoder_file=lfm_files.get("decoder"),
+            audio_embedding_file=lfm_files.get("audio_embedding"),
+            audio_encoder_file=lfm_files.get("audio_encoder"),
+            audio_detokenizer_file=lfm_files.get("audio_detokenizer"),
+            vocoder_depthformer_file=lfm_files.get("vocoder_depthformer"),
+        )
 
         # Initialize ASR engine
-        if ASR_BACKEND == "wav2vec2_onnx":
+        if ASR_ENGINE == "wav2vec2_onnx":
             logger.info(f"Loading Wav2Vec2 ONNX ASR model ({ASR_MODEL_NAME})...")
             # Load processor for feature extraction + CTC labels
             asr_processor = Wav2Vec2Processor.from_pretrained(ASR_MODEL_NAME)
@@ -347,14 +259,12 @@ def initialize_models():
                     raise
             asr_session = InferenceSession(asr_onnx_path_env, sess_options)
             logger.info("Wav2Vec2 ONNX ASR model loaded")
-        elif ASR_BACKEND == "whisper_pt":
-            logger.info("ASR_BACKEND set to whisper_pt; loading Whisper model...")
+        else:
+            logger.info("ASR_ENGINE set to whisper_pt; loading Whisper model...")
             processor = WhisperProcessor.from_pretrained("openai/whisper-base")
             whisper_model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-base")
             whisper_model.config.forced_decoder_ids = None
             logger.info("Whisper model loaded successfully")
-        else:
-            logger.info("ASR_BACKEND set to gguf; using GGUF server for ASR")
 
     except Exception as e:
         logger.error(f"Error initializing models: {str(e)}")
@@ -395,34 +305,31 @@ def generate_audio():
                 logger.info("Returning cached audio")
                 return jsonify({"status": "success", "filename": filename})
 
-            if TTS_BACKEND == "gguf":
-                gguf_tts(text, cached_file_path)
-            else:
-                if lfm_model is None:
-                    raise Exception("LFM model not initialized")
+            if lfm_model is None:
+                raise Exception("LFM model not initialized")
 
-                # Reset cache to avoid cross-request context
-                lfm_model.reset()
+            # Reset cache to avoid cross-request context
+            lfm_model.reset()
 
-                audio_codes = lfm_model.synthesize(
-                    text,
-                    max_new_tokens=int(LFM_MAX_TOKENS),
-                    audio_temperature=float(LFM_AUDIO_TEMPERATURE),
-                    audio_top_k=int(LFM_AUDIO_TOP_K),
-                    text_temperature=float(LFM_TEXT_TEMPERATURE),
-                    system_prompt=LFM_SYSTEM_PROMPT,
-                )
-                if not audio_codes:
-                    raise Exception("LFM inference produced no audio codes")
+            audio_codes = lfm_model.synthesize(
+                text,
+                max_new_tokens=int(LFM_MAX_TOKENS),
+                audio_temperature=float(LFM_AUDIO_TEMPERATURE),
+                audio_top_k=int(LFM_AUDIO_TOP_K),
+                text_temperature=float(LFM_TEXT_TEMPERATURE),
+                system_prompt=LFM_SYSTEM_PROMPT,
+            )
+            if not audio_codes:
+                raise Exception("LFM inference produced no audio codes")
 
-                ok = audio_codes_to_wav(
-                    audio_codes,
-                    cached_file_path,
-                    model_dir=Path(lfm_model_dir),
-                    audio_detokenizer_file=lfm_files.get("audio_detokenizer"),
-                )
-                if not ok or not os.path.exists(cached_file_path):
-                    raise Exception("LFM inference produced no audio output")
+            ok = audio_codes_to_wav(
+                audio_codes,
+                cached_file_path,
+                model_dir=Path(lfm_model_dir),
+                audio_detokenizer_file=lfm_files.get("audio_detokenizer"),
+            )
+            if not ok or not os.path.exists(cached_file_path):
+                raise Exception("LFM inference produced no audio output")
 
             logger.info(f"Audio saved: {cached_file_path}")
             return jsonify({"status": "success", "filename": filename})
@@ -480,10 +387,7 @@ def transcribe_audio():
             logger.debug("Processing audio for transcription...")
             audio_array, sampling_rate = librosa.load(converted_audio_path, sr=16000)
 
-            if ASR_BACKEND == "gguf":
-                transcription = gguf_asr(converted_audio_path)
-                logger.info(f"Transcription (GGUF): {transcription}")
-            elif ASR_BACKEND == "wav2vec2_onnx" and 'asr_session' in globals() and asr_session is not None:
+            if ASR_ENGINE == "wav2vec2_onnx" and 'asr_session' in globals() and asr_session is not None:
                 # Prepare input for Wav2Vec2 ONNX: float32 PCM, shape (batch, samples)
                 inputs = asr_processor(audio_array, sampling_rate=16000, return_tensors="np")
                 # Some exports expect input as (batch, sequence); adjust key as needed
