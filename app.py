@@ -107,7 +107,7 @@ def build_lfm_command(prompt_text, output_path):
         cmd = resolve_uv_command() + cmd[1:]
     cmd += [
         "--mode", "tts",
-        lfm_model_dir,
+        os.path.abspath(lfm_model_dir),
         "--precision", LFM_PRECISION,
         "--prompt", prompt_text,
         "--output", output_path,
