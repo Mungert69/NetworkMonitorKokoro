@@ -136,8 +136,12 @@ def ensure_lfm_runner():
         )
     if shutil.which("uv") is None:
         logger.info("Installing uv for LFM runner bootstrap...")
+        in_venv = bool(os.environ.get("VIRTUAL_ENV")) or (hasattr(sys, "base_prefix") and sys.prefix != sys.base_prefix)
+        pip_cmd = [sys.executable, "-m", "pip", "install", "uv"]
+        if not in_venv:
+            pip_cmd.insert(4, "--user")
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--user", "uv"],
+            pip_cmd,
             check=True,
         )
     logger.info("Syncing LFM runner dependencies with uv...")
