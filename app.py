@@ -64,7 +64,13 @@ LFM_TIMEOUT_SEC = int(os.environ.get("LFM_TIMEOUT_SEC", "300"))
 LFM_AUDIO_TEMPERATURE = os.environ.get("LFM_AUDIO_TEMPERATURE", "1.0")
 LFM_AUDIO_TOP_K = os.environ.get("LFM_AUDIO_TOP_K", "2000")
 LFM_MAX_TOKENS = os.environ.get("LFM_MAX_TOKENS", "1024")
+LFM_DECODER = os.environ.get("LFM_DECODER", "")
+LFM_AUDIO_EMBEDDING = os.environ.get("LFM_AUDIO_EMBEDDING", "")
+LFM_AUDIO_ENCODER = os.environ.get("LFM_AUDIO_ENCODER", "")
+LFM_AUDIO_DETOKENIZER = os.environ.get("LFM_AUDIO_DETOKENIZER", "")
+LFM_VOCODER_DEPTHFORMER = os.environ.get("LFM_VOCODER_DEPTHFORMER", "")
 lfm_model_dir = None
+lfm_onnx_dir = None
 
 # Directory to serve files from
 default_serve_dir = os.path.join(os.path.expanduser("~"), "app", "files")
