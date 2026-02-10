@@ -18,6 +18,7 @@ from pathlib import Path
 from huggingface_hub import snapshot_download
 import hashlib
 import onnxruntime as ort
+from tts_processor import preprocess_all
 
 # ---------------------------
 # THREAD LIMIT CONFIG
@@ -385,7 +386,8 @@ def generate_audio():
 
             validate_text_input(text)
 
-            # No preprocessing needed for LFM2.5
+            # Preprocess text (tts_processor)
+            text = preprocess_all(text)
             text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
             filename = f"{text_hash}.wav"
             cached_file_path = os.path.join(SERVE_DIR, filename)
