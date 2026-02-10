@@ -178,7 +178,6 @@ def initialize_models():
                         raise FileNotFoundError("No .onnx file found in downloaded repo")
                     os.makedirs(os.path.dirname(asr_onnx_path_env), exist_ok=True)
                     # Copy to stable location
-                    import shutil
                     shutil.copyfile(onnx_path, asr_onnx_path_env)
                     logger.info(f"Downloaded ASR ONNX to {asr_onnx_path_env}")
                 except Exception as de:
