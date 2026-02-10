@@ -154,15 +154,15 @@ def build_lfm_command(prompt_text, output_path):
         "--output", output_path,
     ]
     if lfm_files.get("decoder"):
-        cmd += ["--decoder", lfm_files["decoder"]]
+        cmd += ["--decoder", os.path.basename(lfm_files["decoder"])]
     if lfm_files.get("audio_embedding"):
-        cmd += ["--audio-embedding", lfm_files["audio_embedding"]]
+        cmd += ["--audio-embedding", os.path.basename(lfm_files["audio_embedding"])]
     if lfm_files.get("audio_encoder"):
-        cmd += ["--audio-encoder", lfm_files["audio_encoder"]]
+        cmd += ["--audio-encoder", os.path.basename(lfm_files["audio_encoder"])]
     if lfm_files.get("audio_detokenizer"):
-        cmd += ["--audio-detokenizer", lfm_files["audio_detokenizer"]]
+        cmd += ["--audio-detokenizer", os.path.basename(lfm_files["audio_detokenizer"])]
     if lfm_files.get("vocoder_depthformer"):
-        cmd += ["--vocoder-depthformer", lfm_files["vocoder_depthformer"]]
+        cmd += ["--vocoder-depthformer", os.path.basename(lfm_files["vocoder_depthformer"])]
     if LFM_SYSTEM_PROMPT:
         cmd += ["--system", LFM_SYSTEM_PROMPT]
     if LFM_MAX_TOKENS:
