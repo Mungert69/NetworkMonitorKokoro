@@ -224,10 +224,15 @@ def initialize_models():
     global lfm_model_dir, lfm_onnx_dir, lfm_files
 
     try:
-        # Download the LFM2.5 Audio ONNX model if not already downloaded
-        if not os.path.exists(LFM_MODEL_DIR):
-            logger.info("Downloading and caching LFM2.5 Audio ONNX model...")
-            lfm_model_dir = snapshot_download(LFM_MODEL_ID, cache_dir=LFM_MODEL_DIR)
+        # Download the LFM2.5 Audio ONNX model into a real local directory (no symlinks)
+        config_path = os.path.join(LFM_MODEL_DIR, "config.json")
+        if not os.path.isfile(config_path):
+            logger.info("Downloading LFM2.5 Audio ONNX model (materialized, no symlinks)...")
+            lfm_model_dir = snapshot_download(
+                LFM_MODEL_ID,
+                local_dir=LFM_MODEL_DIR,
+                local_dir_use_symlinks=False,
+            )
             logger.info(f"LFM model directory: {lfm_model_dir}")
         else:
             lfm_model_dir = LFM_MODEL_DIR
