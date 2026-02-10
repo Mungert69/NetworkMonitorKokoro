@@ -80,7 +80,7 @@ if [ -z "$GGUF_BIN" ]; then
 fi
 
 # Write gguf_server.service
-cat > "$SERVICE_DIR/gguf_server.service" <<'EOF_SERVICE'
+cat > "$SERVICE_DIR/gguf_server.service" <<EOF_SERVICE
 [Unit]
 Description=GGUF Audio Server (llama-liquid-audio-server)
 After=network.target
@@ -89,13 +89,13 @@ After=network.target
 Type=simple
 User=audioservice
 WorkingDirectory=/home/audioservice
-Environment=GGUF_MODEL=$MODEL_DIR/LFM2.5-Audio-1.5B-Q4_0.gguf
-Environment=GGUF_MMPROJ=$MODEL_DIR/mmproj-LFM2.5-Audio-1.5B-Q4_0.gguf
-Environment=GGUF_VOCODER=$MODEL_DIR/vocoder-LFM2.5-Audio-1.5B-Q4_0.gguf
-Environment=GGUF_TOKENIZER=$MODEL_DIR/tokenizer-LFM2.5-Audio-1.5B-Q4_0.gguf
-Environment=GGUF_HOST=$GGUF_HOST
-Environment=GGUF_PORT=$GGUF_PORT
-ExecStart=/bin/sh -lc '$GGUF_BIN -m "$GGUF_MODEL" -mm "$GGUF_MMPROJ" -mv "$GGUF_VOCODER" --tts-speaker-file "$GGUF_TOKENIZER" --host "$GGUF_HOST" --port "$GGUF_PORT"'
+Environment=GGUF_MODEL=${MODEL_DIR}/LFM2.5-Audio-1.5B-Q4_0.gguf
+Environment=GGUF_MMPROJ=${MODEL_DIR}/mmproj-LFM2.5-Audio-1.5B-Q4_0.gguf
+Environment=GGUF_VOCODER=${MODEL_DIR}/vocoder-LFM2.5-Audio-1.5B-Q4_0.gguf
+Environment=GGUF_TOKENIZER=${MODEL_DIR}/tokenizer-LFM2.5-Audio-1.5B-Q4_0.gguf
+Environment=GGUF_HOST=${GGUF_HOST}
+Environment=GGUF_PORT=${GGUF_PORT}
+ExecStart=/bin/sh -lc '${GGUF_BIN} -m "$$GGUF_MODEL" -mm "$$GGUF_MMPROJ" -mv "$$GGUF_VOCODER" --tts-speaker-file "$$GGUF_TOKENIZER" --host "$$GGUF_HOST" --port "$$GGUF_PORT"'
 Restart=always
 RestartSec=2
 
@@ -104,15 +104,15 @@ WantedBy=multi-user.target
 EOF_SERVICE
 
 # Write audio_server_gguf.service
-cat > "$SERVICE_DIR/audio_server_gguf.service" <<'EOF_SERVICE'
+cat > "$SERVICE_DIR/audio_server_gguf.service" <<EOF_SERVICE
 [Unit]
 Description=Audio Server (GGUF)
 After=network.target gguf_server.service
 Wants=gguf_server.service
 
 [Service]
-ExecStart=$APP_DIR/venv/bin/python3 $APP_DIR/app.py
-WorkingDirectory=$APP_DIR
+ExecStart=${APP_DIR}/venv/bin/python3 ${APP_DIR}/app.py
+WorkingDirectory=${APP_DIR}
 Restart=always
 User=audioservice
 Environment=PYTHONUNBUFFERED=1
@@ -123,7 +123,7 @@ Environment=SERVE_DIR=/home/audioservice/app/files
 Environment=USE_WAV2VEC2=0
 Environment=TTS_BACKEND=gguf
 Environment=ASR_BACKEND=gguf
-Environment=GGUF_SERVER_URL=http://$GGUF_HOST:$GGUF_PORT/v1
+Environment=GGUF_SERVER_URL=http://${GGUF_HOST}:${GGUF_PORT}/v1
 
 [Install]
 WantedBy=multi-user.target
