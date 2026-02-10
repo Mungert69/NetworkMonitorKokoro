@@ -107,13 +107,13 @@ def build_lfm_command(prompt_text, output_path):
         cmd = resolve_uv_command() + cmd[1:]
     cmd += [
         "--mode", "tts",
-        "--model-path", lfm_model_dir,
+        lfm_model_dir,
         "--precision", LFM_PRECISION,
         "--prompt", prompt_text,
-        "--output-path", output_path,
+        "--output", output_path,
     ]
     if LFM_SYSTEM_PROMPT:
-        cmd += ["--system-prompt", LFM_SYSTEM_PROMPT]
+        cmd += ["--system", LFM_SYSTEM_PROMPT]
     if LFM_MAX_TOKENS:
         cmd += ["--max-tokens", str(LFM_MAX_TOKENS)]
     if LFM_AUDIO_TEMPERATURE:
