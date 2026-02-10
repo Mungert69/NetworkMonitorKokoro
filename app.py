@@ -12,8 +12,8 @@ from flask_cors import CORS
 import threading
 import tempfile
 import subprocess
-import shlex
 import shutil
+from pathlib import Path
 from huggingface_hub import snapshot_download
 import hashlib
 import onnxruntime as ort
@@ -55,15 +55,15 @@ LFM_MODEL_ID = os.environ.get("LFM_MODEL_ID", "LiquidAI/LFM2.5-Audio-1.5B-ONNX")
 LFM_MODEL_DIR = os.environ.get("LFM_MODEL_DIR", "lfm_audio_model")
 LFM_PRECISION = os.environ.get("LFM_PRECISION", "q4")
 LFM_SYSTEM_PROMPT = os.environ.get("LFM_SYSTEM_PROMPT", "Perform TTS. Use the UK female voice.")
-LFM_RUNNER = os.environ.get("LFM_RUNNER", "uv run lfm2-audio-infer")
 LFM_RUNNER_REPO = os.environ.get("LFM_RUNNER_REPO", "https://github.com/Liquid4All/onnx-export.git")
 LFM_RUNNER_DIR = os.environ.get("LFM_RUNNER_DIR", "lfm_runner")
-LFM_RUNNER_CWD = os.environ.get("LFM_RUNNER_CWD", LFM_RUNNER_DIR)
+LFM_PYTHONPATH = os.environ.get("LFM_PYTHONPATH", os.path.join(LFM_RUNNER_DIR, "src"))
 LFM_BOOTSTRAP = os.environ.get("LFM_BOOTSTRAP", "1").lower() in {"1", "true", "yes", "on"}
-LFM_TIMEOUT_SEC = int(os.environ.get("LFM_TIMEOUT_SEC", "300"))
-LFM_AUDIO_TEMPERATURE = os.environ.get("LFM_AUDIO_TEMPERATURE", "1.0")
-LFM_AUDIO_TOP_K = os.environ.get("LFM_AUDIO_TOP_K", "2000")
+LFM_AUDIO_TEMPERATURE = os.environ.get("LFM_AUDIO_TEMPERATURE", "0.8")
+LFM_AUDIO_TOP_K = os.environ.get("LFM_AUDIO_TOP_K", "64")
 LFM_MAX_TOKENS = os.environ.get("LFM_MAX_TOKENS", "1024")
+LFM_TEXT_TEMPERATURE = os.environ.get("LFM_TEXT_TEMPERATURE", "0.7")
+LFM_LOAD_AUDIO_ENCODER = os.environ.get("LFM_LOAD_AUDIO_ENCODER", "0").lower() in {"1", "true", "yes", "on"}
 LFM_DECODER = os.environ.get("LFM_DECODER", "")
 LFM_AUDIO_EMBEDDING = os.environ.get("LFM_AUDIO_EMBEDDING", "")
 LFM_AUDIO_ENCODER = os.environ.get("LFM_AUDIO_ENCODER", "")
@@ -72,6 +72,10 @@ LFM_VOCODER_DEPTHFORMER = os.environ.get("LFM_VOCODER_DEPTHFORMER", "")
 lfm_model_dir = None
 lfm_onnx_dir = None
 lfm_files = {}
+lfm_model = None
+LFM2AudioInference = None
+audio_codes_to_wav = None
+resolve_precision_files = None
 
 # Directory to serve files from
 default_serve_dir = os.path.join(os.path.expanduser("~"), "app", "files")
@@ -116,101 +120,41 @@ def resolve_lfm_onnx_dir(base_dir):
             return os.path.join(root, "onnx")
     return base_dir
 
-def pick_file(candidates, precision):
-    if not candidates:
-        return ""
-    # prefer precision-specific file, then any candidate
-    for cand in candidates:
-        if f"_{precision}" in os.path.basename(cand):
-            return cand
-    return candidates[0]
+def ensure_lfm_python():
+    global LFM2AudioInference, audio_codes_to_wav, resolve_precision_files
 
-def discover_lfm_files(onnx_dir, precision):
-    if not onnx_dir or not os.path.isdir(onnx_dir):
-        return {}
-    def glob_one(prefix):
-        return sorted(
-            [os.path.join(onnx_dir, f) for f in os.listdir(onnx_dir) if f.startswith(prefix) and f.endswith(".onnx")]
+    if LFM2AudioInference is not None:
+        return
+
+    if LFM_PYTHONPATH and os.path.isdir(LFM_PYTHONPATH) and LFM_PYTHONPATH not in sys.path:
+        sys.path.insert(0, LFM_PYTHONPATH)
+
+    try:
+        from liquidonnx.lfm2_audio.infer import (  # type: ignore
+            LFM2AudioInference,
+            audio_codes_to_wav,
+            resolve_precision_files,
         )
-    files = {
-        "decoder": pick_file(glob_one("decoder"), precision),
-        "audio_embedding": pick_file(glob_one("audio_embedding"), precision),
-        "audio_encoder": pick_file(glob_one("audio_encoder"), precision),
-        "audio_detokenizer": pick_file(glob_one("audio_detokenizer"), precision),
-        "vocoder_depthformer": pick_file(glob_one("vocoder_depthformer"), precision),
-    }
-    # Drop missing
-    return {k: v for k, v in files.items() if v}
-
-def build_lfm_command(prompt_text, output_path):
-    cmd = shlex.split(LFM_RUNNER)
-    if cmd and cmd[0] == "uv":
-        cmd = resolve_uv_command() + cmd[1:]
-    cmd += [
-        "--mode", "tts",
-        os.path.abspath(lfm_model_dir),
-        "--precision", LFM_PRECISION,
-        "--prompt", prompt_text,
-        "--output", output_path,
-    ]
-    if lfm_files.get("decoder"):
-        cmd += ["--decoder", os.path.basename(lfm_files["decoder"])]
-    if lfm_files.get("audio_embedding"):
-        cmd += ["--audio-embedding", os.path.basename(lfm_files["audio_embedding"])]
-    if lfm_files.get("audio_encoder"):
-        cmd += ["--audio-encoder", os.path.basename(lfm_files["audio_encoder"])]
-    if lfm_files.get("audio_detokenizer"):
-        cmd += ["--audio-detokenizer", os.path.basename(lfm_files["audio_detokenizer"])]
-    if lfm_files.get("vocoder_depthformer"):
-        cmd += ["--vocoder-depthformer", os.path.basename(lfm_files["vocoder_depthformer"])]
-    if LFM_SYSTEM_PROMPT:
-        cmd += ["--system", LFM_SYSTEM_PROMPT]
-    if LFM_MAX_TOKENS:
-        cmd += ["--max-tokens", str(LFM_MAX_TOKENS)]
-    if LFM_AUDIO_TEMPERATURE:
-        cmd += ["--audio-temperature", str(LFM_AUDIO_TEMPERATURE)]
-    if LFM_AUDIO_TOP_K:
-        cmd += ["--audio-top-k", str(LFM_AUDIO_TOP_K)]
-    return cmd
-
-def resolve_uv_command():
-    uv_path = shutil.which("uv")
-    if uv_path:
-        return [uv_path]
-    venv_bin = os.path.join(os.path.dirname(sys.executable), "uv")
-    if os.path.exists(venv_bin):
-        return [venv_bin]
-    return [sys.executable, "-m", "uv"]
-
-def ensure_lfm_runner():
-    runner_exe = shlex.split(LFM_RUNNER)[0]
-    if runner_exe != "uv" and shutil.which(runner_exe) is not None:
         return
-    if not LFM_BOOTSTRAP:
-        return
+    except Exception:
+        if not LFM_BOOTSTRAP:
+            raise
+
     if shutil.which("git") is None:
-        raise RuntimeError("git is required to bootstrap LFM runner")
+        raise RuntimeError("git is required to bootstrap LFM runner source")
     if not os.path.exists(LFM_RUNNER_DIR):
         logger.info(f"Cloning LFM ONNX runner repo to {LFM_RUNNER_DIR}...")
         subprocess.run(
             ["git", "clone", LFM_RUNNER_REPO, LFM_RUNNER_DIR],
             check=True,
         )
-    if shutil.which("uv") is None:
-        logger.info("Installing uv for LFM runner bootstrap...")
-        in_venv = bool(os.environ.get("VIRTUAL_ENV")) or (hasattr(sys, "base_prefix") and sys.prefix != sys.base_prefix)
-        pip_cmd = [sys.executable, "-m", "pip", "install", "uv"]
-        if not in_venv:
-            pip_cmd.insert(4, "--user")
-        subprocess.run(
-            pip_cmd,
-            check=True,
-        )
-    logger.info("Syncing LFM runner dependencies with uv...")
-    subprocess.run(
-        resolve_uv_command() + ["sync"],
-        cwd=LFM_RUNNER_DIR,
-        check=True,
+    if LFM_PYTHONPATH and os.path.isdir(LFM_PYTHONPATH) and LFM_PYTHONPATH not in sys.path:
+        sys.path.insert(0, LFM_PYTHONPATH)
+
+    from liquidonnx.lfm2_audio.infer import (  # type: ignore
+        LFM2AudioInference,
+        audio_codes_to_wav,
+        resolve_precision_files,
     )
 
 use_wav2vec2 = os.environ.get("USE_WAV2VEC2", "").lower() in {"1", "true", "yes", "on"}
@@ -221,7 +165,7 @@ ASR_ONNX_REPO = os.environ.get("ASR_ONNX_REPO", "onnx-community/wav2vec2-base-96
 # Initialize models
 def initialize_models():
     global processor, whisper_model, asr_session, asr_processor
-    global lfm_model_dir, lfm_onnx_dir, lfm_files
+    global lfm_model_dir, lfm_onnx_dir, lfm_files, lfm_model
 
     try:
         # Download the LFM2.5 Audio ONNX model into a real local directory (no symlinks)
@@ -241,15 +185,35 @@ def initialize_models():
         # Resolve model root (config.json) and onnx dir
         lfm_model_dir = resolve_lfm_model_root(lfm_model_dir)
         lfm_onnx_dir = resolve_lfm_onnx_dir(lfm_model_dir)
-        lfm_files = discover_lfm_files(lfm_onnx_dir, LFM_PRECISION)
         logger.info(f"Resolved LFM model directory: {lfm_model_dir}")
         logger.info(f"Resolved LFM ONNX directory: {lfm_onnx_dir}")
-        if lfm_files:
-            logger.info(f"LFM ONNX files: {lfm_files}")
-        try:
-            ensure_lfm_runner()
-        except Exception as re:
-            logger.warning(f"LFM runner bootstrap skipped/failed: {re}")
+
+        # Ensure python module for in-process inference is available
+        ensure_lfm_python()
+
+        # Resolve ONNX filenames for selected precision
+        lfm_files = resolve_precision_files(LFM_PRECISION)
+        if LFM_DECODER:
+            lfm_files["decoder"] = LFM_DECODER
+        if LFM_AUDIO_EMBEDDING:
+            lfm_files["audio_embedding"] = LFM_AUDIO_EMBEDDING
+        if LFM_AUDIO_ENCODER:
+            lfm_files["audio_encoder"] = LFM_AUDIO_ENCODER
+        if LFM_AUDIO_DETOKENIZER:
+            lfm_files["audio_detokenizer"] = LFM_AUDIO_DETOKENIZER
+        if LFM_VOCODER_DEPTHFORMER:
+            lfm_files["vocoder_depthformer"] = LFM_VOCODER_DEPTHFORMER
+        if not LFM_LOAD_AUDIO_ENCODER:
+            lfm_files["audio_encoder"] = "audio_encoder.DISABLED.onnx"
+
+        lfm_model = LFM2AudioInference(
+            Path(lfm_model_dir),
+            decoder_file=lfm_files.get("decoder"),
+            audio_embedding_file=lfm_files.get("audio_embedding"),
+            audio_encoder_file=lfm_files.get("audio_encoder"),
+            audio_detokenizer_file=lfm_files.get("audio_detokenizer"),
+            vocoder_depthformer_file=lfm_files.get("vocoder_depthformer"),
+        )
 
         # Initialize ASR engine
         if ASR_ENGINE == "wav2vec2_onnx":
@@ -341,21 +305,30 @@ def generate_audio():
                 logger.info("Returning cached audio")
                 return jsonify({"status": "success", "filename": filename})
 
-            # LFM2.5 Audio ONNX inference via CLI runner
-            cmd = build_lfm_command(text, cached_file_path)
-            logger.info(f"Running LFM audio inference: {' '.join(cmd)}")
-            result = subprocess.run(
-                cmd,
-                cwd=LFM_RUNNER_CWD if LFM_RUNNER_CWD else None,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=LFM_TIMEOUT_SEC,
+            if lfm_model is None:
+                raise Exception("LFM model not initialized")
+
+            # Reset cache to avoid cross-request context
+            lfm_model.reset()
+
+            audio_codes = lfm_model.synthesize(
+                text,
+                max_new_tokens=int(LFM_MAX_TOKENS),
+                audio_temperature=float(LFM_AUDIO_TEMPERATURE),
+                audio_top_k=int(LFM_AUDIO_TOP_K),
+                text_temperature=float(LFM_TEXT_TEMPERATURE),
+                system_prompt=LFM_SYSTEM_PROMPT,
             )
-            if result.returncode != 0:
-                logger.error(f"LFM inference error: {result.stderr}")
-                raise Exception(f"LFM inference failed: {result.stderr}")
-            if not os.path.exists(cached_file_path) or os.path.getsize(cached_file_path) == 0:
+            if not audio_codes:
+                raise Exception("LFM inference produced no audio codes")
+
+            ok = audio_codes_to_wav(
+                audio_codes,
+                cached_file_path,
+                model_dir=Path(lfm_model_dir),
+                audio_detokenizer_file=lfm_files.get("audio_detokenizer"),
+            )
+            if not ok or not os.path.exists(cached_file_path):
                 raise Exception("LFM inference produced no audio output")
 
             logger.info(f"Audio saved: {cached_file_path}")
@@ -365,9 +338,6 @@ def generate_audio():
             return jsonify({"status": "error", "message": str(e)}), 500
 
 # Speech-to-Text (S2T) Endpoint
-from pathlib import Path
-
-# Then update the transcribe_audio function:
 @app.route('/transcribe_audio', methods=['POST'])
 def transcribe_audio():
     """Speech-to-Text (S2T) Endpoint with automatic format conversion"""
