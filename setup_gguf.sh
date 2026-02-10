@@ -95,7 +95,7 @@ Environment=GGUF_VOCODER=$MODEL_DIR/vocoder-LFM2.5-Audio-1.5B-Q4_0.gguf
 Environment=GGUF_TOKENIZER=$MODEL_DIR/tokenizer-LFM2.5-Audio-1.5B-Q4_0.gguf
 Environment=GGUF_HOST=$GGUF_HOST
 Environment=GGUF_PORT=$GGUF_PORT
-ExecStart=/bin/sh -lc '$GGUF_BIN -m "${GGUF_MODEL}" -mm "${GGUF_MMPROJ}" -mv "${GGUF_VOCODER}" --tts-speaker-file "${GGUF_TOKENIZER}" --host "${GGUF_HOST}" --port "${GGUF_PORT}"'
+ExecStart=/bin/sh -lc '$GGUF_BIN -m "$GGUF_MODEL" -mm "$GGUF_MMPROJ" -mv "$GGUF_VOCODER" --tts-speaker-file "$GGUF_TOKENIZER" --host "$GGUF_HOST" --port "$GGUF_PORT"'
 Restart=always
 RestartSec=2
 
