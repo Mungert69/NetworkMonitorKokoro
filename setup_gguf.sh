@@ -35,14 +35,16 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 # Install huggingface-cli
-if ! command -v huggingface-cli >/dev/null 2>&1; then
-  python3 -m pip install -U --break-system-packages "huggingface_hub[cli]"
+if ! command -v hf >/dev/null 2>&1 && ! command -v huggingface-cli >/dev/null 2>&1; then
+  python3 -m pip install -U --break-system-packages huggingface_hub
 fi
 
-if command -v huggingface-cli >/dev/null 2>&1; then
+if command -v hf >/dev/null 2>&1; then
+  HF_CLI="hf"
+elif command -v huggingface-cli >/dev/null 2>&1; then
   HF_CLI="huggingface-cli"
 else
-  HF_CLI="python3 -m huggingface_hub.commands.huggingface_cli"
+  HF_CLI="python3 -m huggingface_hub.cli.hf"
 fi
 
 # Install OpenAI client in app venv (for GGUF backend)
