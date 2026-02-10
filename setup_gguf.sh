@@ -80,7 +80,7 @@ if [ -z "$GGUF_BIN" ]; then
 fi
 
 # Write gguf_server.service
-cat > "$SERVICE_DIR/gguf_server.service" <<EOF_SERVICE
+cat > "$SERVICE_DIR/gguf_server.service" <<'EOF_SERVICE'
 [Unit]
 Description=GGUF Audio Server (llama-liquid-audio-server)
 After=network.target
@@ -104,7 +104,7 @@ WantedBy=multi-user.target
 EOF_SERVICE
 
 # Write audio_server_gguf.service
-cat > "$SERVICE_DIR/audio_server_gguf.service" <<EOF_SERVICE
+cat > "$SERVICE_DIR/audio_server_gguf.service" <<'EOF_SERVICE'
 [Unit]
 Description=Audio Server (GGUF)
 After=network.target gguf_server.service
