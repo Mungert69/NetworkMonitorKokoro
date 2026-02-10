@@ -39,6 +39,12 @@ if ! command -v huggingface-cli >/dev/null 2>&1; then
   python3 -m pip install -U --break-system-packages "huggingface_hub[cli]"
 fi
 
+if command -v huggingface-cli >/dev/null 2>&1; then
+  HF_CLI="huggingface-cli"
+else
+  HF_CLI="python3 -m huggingface_hub.commands.huggingface_cli"
+fi
+
 # Install OpenAI client in app venv (for GGUF backend)
 if [ -x "$VENV_PY" ]; then
   "$VENV_PY" -m pip install -U openai
@@ -49,7 +55,7 @@ fi
 mkdir -p "$MODEL_DIR" "$RUNNER_DIR"
 
 # Download GGUF model files
-huggingface-cli download LiquidAI/LFM2.5-Audio-1.5B-GGUF \
+${HF_CLI} download LiquidAI/LFM2.5-Audio-1.5B-GGUF \
   --local-dir "$MODEL_DIR" \
   --local-dir-use-symlinks False \
   --include "LFM2.5-Audio-1.5B-Q4_0.gguf" \
@@ -58,7 +64,7 @@ huggingface-cli download LiquidAI/LFM2.5-Audio-1.5B-GGUF \
   --include "tokenizer-LFM2.5-Audio-1.5B-Q4_0.gguf"
 
 # Download runner zip
-huggingface-cli download LiquidAI/LFM2.5-Audio-1.5B-GGUF \
+${HF_CLI} download LiquidAI/LFM2.5-Audio-1.5B-GGUF \
   --local-dir "$RUNNER_DIR" \
   --local-dir-use-symlinks False \
   --include "runners/${ZIP_NAME}"
