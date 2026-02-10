@@ -8,6 +8,10 @@ RUNNER_DIR="/home/audioservice/gguf-runners"
 SERVICE_DIR="/etc/systemd/system"
 GGUF_HOST="127.0.0.1"
 GGUF_PORT="8080"
+LOG="/home/audioservice/gguf_setup_report.txt"
+
+mkdir -p "$(dirname "$LOG")"
+exec > >(tee -a "$LOG") 2>&1
 
 ARCH="$(uname -m)"
 case "$ARCH" in
@@ -133,4 +137,12 @@ systemctl daemon-reload
 systemctl enable --now gguf_server.service
 systemctl enable --now audio_server_gguf.service
 
-echo "GGUF setup complete."
+if [ -x "$APP_DIR/verify_gguf_setup.sh" ]; then
+  echo "Running verification..."
+  "$APP_DIR/verify_gguf_setup.sh" || true
+fi
+
+echo "Service status:"
+systemctl --no-pager status gguf_server.service audio_server_gguf.service || true
+
+echo "GGUF setup complete. Report saved to $LOG"
