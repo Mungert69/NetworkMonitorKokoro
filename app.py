@@ -103,6 +103,8 @@ def resolve_lfm_model_dir(base_dir):
 
 def build_lfm_command(prompt_text, output_path):
     cmd = shlex.split(LFM_RUNNER)
+    if cmd and cmd[0] == "uv":
+        cmd = resolve_uv_command() + cmd[1:]
     cmd += [
         "--mode", "tts",
         "--model-path", lfm_model_dir,
@@ -120,9 +122,18 @@ def build_lfm_command(prompt_text, output_path):
         cmd += ["--audio-top-k", str(LFM_AUDIO_TOP_K)]
     return cmd
 
+def resolve_uv_command():
+    uv_path = shutil.which("uv")
+    if uv_path:
+        return [uv_path]
+    venv_bin = os.path.join(os.path.dirname(sys.executable), "uv")
+    if os.path.exists(venv_bin):
+        return [venv_bin]
+    return [sys.executable, "-m", "uv"]
+
 def ensure_lfm_runner():
     runner_exe = shlex.split(LFM_RUNNER)[0]
-    if shutil.which(runner_exe) is not None:
+    if runner_exe != "uv" and shutil.which(runner_exe) is not None:
         return
     if not LFM_BOOTSTRAP:
         return
@@ -146,7 +157,7 @@ def ensure_lfm_runner():
         )
     logger.info("Syncing LFM runner dependencies with uv...")
     subprocess.run(
-        ["uv", "sync"],
+        resolve_uv_command() + ["sync"],
         cwd=LFM_RUNNER_DIR,
         check=True,
     )
