@@ -148,21 +148,36 @@ def initialize_models():
     global punctuation_model, punctuation_tokenizer
 
     try:
-        # Download the ONNX model if not already downloaded
-        if not os.path.exists(model_path):
-            logger.info("Downloading and loading Kokoro model...")
-            kokoro_dir = snapshot_download(kokoro_model_id, cache_dir=model_path)
-            logger.info(f"Kokoro model directory: {kokoro_dir}")
-        else:
-            kokoro_dir = model_path
-            logger.info(f"Using cached Kokoro model directory: {kokoro_dir}")
+        if os.path.exists(model_path) and not os.path.isdir(model_path):
+            raise FileExistsError(f"Model path exists but is not a directory: {model_path}")
 
-        # Validate ONNX file path
-        onnx_path = None
-        for root, _, files in os.walk(kokoro_dir):
-            if 'model.onnx' in files:
-                onnx_path = os.path.join(root, 'model.onnx')
-                break
+        def find_onnx(search_root):
+            for root, _, files in os.walk(search_root):
+                if "model.onnx" in files:
+                    return os.path.join(root, "model.onnx")
+            return None
+
+        kokoro_dir = model_path if os.path.exists(model_path) else None
+        onnx_path = find_onnx(kokoro_dir) if kokoro_dir else None
+
+        if not onnx_path:
+            logger.info("Downloading and loading Kokoro model...")
+            try:
+                import inspect
+                sig = inspect.signature(snapshot_download)
+                if "local_dir" in sig.parameters:
+                    kokoro_dir = snapshot_download(
+                        kokoro_model_id,
+                        local_dir=model_path,
+                        local_dir_use_symlinks=False,
+                    )
+                else:
+                    kokoro_dir = snapshot_download(kokoro_model_id, cache_dir=model_path)
+            except Exception:
+                kokoro_dir = snapshot_download(kokoro_model_id, cache_dir=model_path)
+            logger.info(f"Kokoro model directory: {kokoro_dir}")
+
+            onnx_path = find_onnx(kokoro_dir)
 
         if not onnx_path or not os.path.exists(onnx_path):
             raise FileNotFoundError(f"ONNX file not found after redownload at {kokoro_dir}")
