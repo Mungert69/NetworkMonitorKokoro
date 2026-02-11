@@ -157,26 +157,49 @@ def initialize_models():
                     return os.path.join(root, "model.onnx")
             return None
 
-        kokoro_dir = model_path if os.path.exists(model_path) else None
-        onnx_path = find_onnx(kokoro_dir) if kokoro_dir else None
+        def download_kokoro():
+            allow_patterns_env = os.environ.get("KOKORO_ALLOW_PATTERNS", "")
+            if allow_patterns_env.strip():
+                allow_patterns = [p.strip() for p in allow_patterns_env.split(",") if p.strip()]
+            else:
+                allow_patterns = [
+                    "**/model.onnx",
+                    f"**/{voice_name}.bin",
+                    "config.json",
+                ]
 
-        if not onnx_path:
             logger.info("Downloading and loading Kokoro model...")
             try:
                 import inspect
                 sig = inspect.signature(snapshot_download)
                 if "local_dir" in sig.parameters:
-                    kokoro_dir = snapshot_download(
+                    return snapshot_download(
                         kokoro_model_id,
                         local_dir=model_path,
                         local_dir_use_symlinks=False,
+                        allow_patterns=allow_patterns,
+                        resume_download=True,
                     )
-                else:
-                    kokoro_dir = snapshot_download(kokoro_model_id, cache_dir=model_path)
+                return snapshot_download(
+                    kokoro_model_id,
+                    cache_dir=model_path,
+                    allow_patterns=allow_patterns,
+                    resume_download=True,
+                )
             except Exception:
-                kokoro_dir = snapshot_download(kokoro_model_id, cache_dir=model_path)
-            logger.info(f"Kokoro model directory: {kokoro_dir}")
+                return snapshot_download(
+                    kokoro_model_id,
+                    cache_dir=model_path,
+                    allow_patterns=allow_patterns,
+                    resume_download=True,
+                )
 
+        kokoro_dir = model_path if os.path.exists(model_path) else None
+        onnx_path = find_onnx(kokoro_dir) if kokoro_dir else None
+
+        if not onnx_path:
+            kokoro_dir = download_kokoro()
+            logger.info(f"Kokoro model directory: {kokoro_dir}")
             onnx_path = find_onnx(kokoro_dir)
 
         if not onnx_path or not os.path.exists(onnx_path):
@@ -194,7 +217,13 @@ def initialize_models():
                 break
 
         if not voice_style_path or not os.path.exists(voice_style_path):
-            raise FileNotFoundError(f"Voice style file not found at {voice_style_path}")
+            kokoro_dir = download_kokoro()
+            for root, _, files in os.walk(kokoro_dir):
+                if f'{voice_name}.bin' in files:
+                    voice_style_path = os.path.join(root, f'{voice_name}.bin')
+                    break
+            if not voice_style_path or not os.path.exists(voice_style_path):
+                raise FileNotFoundError(f"Voice style file not found at {voice_style_path}")
 
         logger.info("Loading voice style vector...")
         voice_style = np.fromfile(voice_style_path, dtype=np.float32).reshape(-1, 1, 256)
