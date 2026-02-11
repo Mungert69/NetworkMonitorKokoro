@@ -1,24 +1,27 @@
 from flask import Flask, request, jsonify, send_from_directory, abort
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
-from transformers import Wav2Vec2Processor
+from transformers import Wav2Vec2Processor, AutoTokenizer, AutoModelForTokenClassification
 import librosa
 import torch
 import numpy as np
 from onnxruntime import InferenceSession
+import soundfile as sf
 import os
 import sys
+import uuid
 import logging
 from flask_cors import CORS
+import re
 import threading
+import werkzeug
 import tempfile
-import subprocess
-import shutil
-import base64
-from pathlib import Path
 from huggingface_hub import snapshot_download
-import hashlib
-import onnxruntime as ort
 from tts_processor import preprocess_all
+import hashlib
+import os
+import torch
+import numpy as np
+import onnxruntime as ort
 
 # ---------------------------
 # THREAD LIMIT CONFIG
@@ -52,47 +55,63 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 # Global lock to ensure one method runs at a time
 global_lock = threading.Lock()
 
-# Repository ID and paths (LFM2.5 Audio ONNX)
-TTS_BACKEND = os.environ.get("TTS_BACKEND", "lfm_onnx").lower()  # lfm_onnx | gguf
-ASR_BACKEND = ""  # resolved after USE_WAV2VEC2
-GGUF_SERVER_URL = os.environ.get("GGUF_SERVER_URL", "http://127.0.0.1:8080/v1")
-GGUF_SYSTEM_TTS = os.environ.get("GGUF_SYSTEM_TTS", "Perform TTS. Use the UK female voice.")
-GGUF_SYSTEM_ASR = os.environ.get("GGUF_SYSTEM_ASR", "Perform ASR.")
-GGUF_MAX_TOKENS = int(os.environ.get("GGUF_MAX_TOKENS", "1024"))
-GGUF_AUDIO_SAMPLE_RATE = int(os.environ.get("GGUF_AUDIO_SAMPLE_RATE", "24000"))
-
-LFM_MODEL_ID = os.environ.get("LFM_MODEL_ID", "LiquidAI/LFM2.5-Audio-1.5B-ONNX")
-LFM_MODEL_DIR = os.environ.get("LFM_MODEL_DIR", "lfm_audio_model")
-LFM_PRECISION = os.environ.get("LFM_PRECISION", "q4")
-LFM_SYSTEM_PROMPT = os.environ.get("LFM_SYSTEM_PROMPT", "Perform TTS. Use the UK female voice.")
-LFM_RUNNER_REPO = os.environ.get("LFM_RUNNER_REPO", "https://github.com/Liquid4All/onnx-export.git")
-LFM_RUNNER_DIR = os.environ.get("LFM_RUNNER_DIR", "lfm_runner")
-LFM_PYTHONPATH = os.environ.get("LFM_PYTHONPATH", os.path.join(LFM_RUNNER_DIR, "src"))
-LFM_BOOTSTRAP = os.environ.get("LFM_BOOTSTRAP", "1").lower() in {"1", "true", "yes", "on"}
-LFM_AUDIO_TEMPERATURE = os.environ.get("LFM_AUDIO_TEMPERATURE", "0.8")
-LFM_AUDIO_TOP_K = os.environ.get("LFM_AUDIO_TOP_K", "64")
-LFM_MAX_TOKENS = os.environ.get("LFM_MAX_TOKENS", "1024")
-LFM_TEXT_TEMPERATURE = os.environ.get("LFM_TEXT_TEMPERATURE", "0.7")
-LFM_LOAD_AUDIO_ENCODER = os.environ.get("LFM_LOAD_AUDIO_ENCODER", "0").lower() in {"1", "true", "yes", "on"}
-LFM_DECODER = os.environ.get("LFM_DECODER", "")
-LFM_AUDIO_EMBEDDING = os.environ.get("LFM_AUDIO_EMBEDDING", "")
-LFM_AUDIO_ENCODER = os.environ.get("LFM_AUDIO_ENCODER", "")
-LFM_AUDIO_DETOKENIZER = os.environ.get("LFM_AUDIO_DETOKENIZER", "")
-LFM_VOCODER_DEPTHFORMER = os.environ.get("LFM_VOCODER_DEPTHFORMER", "")
-lfm_model_dir = None
-lfm_onnx_dir = None
-lfm_files = {}
-lfm_model = None
-LFM2AudioInference = None
-audio_codes_to_wav = None
-resolve_precision_files = None
-gguf_client = None
+# Repository ID and paths
+kokoro_model_id = 'onnx-community/Kokoro-82M-v1.0-ONNX'
+model_path = 'kokoro_model'
+voice_name = 'am_adam'  # Example voice: af (adjust as needed)
 
 # Directory to serve files from
 default_serve_dir = os.path.join(os.path.expanduser("~"), "app", "files")
 SERVE_DIR = os.environ.get("SERVE_DIR", default_serve_dir)
 
 os.makedirs(SERVE_DIR, exist_ok=True)
+def validate_audio_file(file):
+    """Validates audio files including WebM/Opus format"""
+    if not isinstance(file, werkzeug.datastructures.FileStorage):
+        raise ValueError("Invalid file type")
+    
+    # Supported MIME types (add WebM/Opus)
+    supported_types = [
+        "audio/wav",
+        "audio/x-wav",
+        "audio/mpeg",
+        "audio/mp3",
+        "audio/webm",
+        "audio/ogg"  # For Opus in Ogg container
+    ]
+    
+    # Check MIME type
+    if file.content_type not in supported_types:
+        raise ValueError(f"Unsupported file type. Must be one of: {', '.join(supported_types)}")
+    
+    # Check file size
+    file.seek(0, os.SEEK_END)
+    file_size = file.tell()
+    file.seek(0)  # Reset file pointer
+    
+    max_size = 10 * 1024 * 1024  # 10 MB
+    if file_size > max_size:
+        raise ValueError(f"File is too large (max {max_size//(1024*1024)} MB)")
+    
+    # Optional: Verify file header matches content_type
+    if not verify_audio_header(file):
+        raise ValueError("File header doesn't match declared content type")
+def verify_audio_header(file):
+    """Quickly checks if file headers match the declared audio format"""
+    header = file.read(4)
+    file.seek(0)  # Rewind after reading
+    
+    if file.content_type in ["audio/webm", "audio/ogg"]:
+        # WebM starts with \x1aE\xdf\xa3, Ogg with OggS
+        return (
+            (file.content_type == "audio/webm" and header.startswith(b'\x1aE\xdf\xa3')) or
+            (file.content_type == "audio/ogg" and header.startswith(b'OggS'))
+        )
+    elif file.content_type in ["audio/wav", "audio/x-wav"]:
+        return header.startswith(b'RIFF')
+    elif file.content_type in ["audio/mpeg", "audio/mp3"]:
+        return header.startswith(b'\xff\xfb')  # MP3 frame sync
+    return True  # Skip verification for other types
 
 def validate_text_input(text):
     if not isinstance(text, str):
@@ -115,197 +134,59 @@ def is_cached(cached_file_path):
     file_cache[cached_file_path] = exists  # Update the cache
     return exists
 
-def resolve_lfm_model_root(base_dir):
-    if os.path.isfile(os.path.join(base_dir, "config.json")):
-        return base_dir
-    for root, _, files in os.walk(base_dir):
-        if "config.json" in files:
-            return root
-    return base_dir
-
-def resolve_lfm_onnx_dir(base_dir):
-    if os.path.isdir(os.path.join(base_dir, "onnx")):
-        return os.path.join(base_dir, "onnx")
-    for root, dirs, _ in os.walk(base_dir):
-        if "onnx" in dirs:
-            return os.path.join(root, "onnx")
-    return base_dir
-
-def ensure_lfm_python():
-    global LFM2AudioInference, audio_codes_to_wav, resolve_precision_files
-
-    if LFM2AudioInference is not None:
-        return
-
-    if LFM_PYTHONPATH and os.path.isdir(LFM_PYTHONPATH) and LFM_PYTHONPATH not in sys.path:
-        sys.path.insert(0, LFM_PYTHONPATH)
-
-    try:
-        from liquidonnx.lfm2_audio.infer import (  # type: ignore
-            LFM2AudioInference,
-            audio_codes_to_wav,
-            resolve_precision_files,
-        )
-        return
-    except Exception:
-        if not LFM_BOOTSTRAP:
-            raise
-
-    if shutil.which("git") is None:
-        raise RuntimeError("git is required to bootstrap LFM runner source")
-    if not os.path.exists(LFM_RUNNER_DIR):
-        logger.info(f"Cloning LFM ONNX runner repo to {LFM_RUNNER_DIR}...")
-        subprocess.run(
-            ["git", "clone", LFM_RUNNER_REPO, LFM_RUNNER_DIR],
-            check=True,
-        )
-    if LFM_PYTHONPATH and os.path.isdir(LFM_PYTHONPATH) and LFM_PYTHONPATH not in sys.path:
-        sys.path.insert(0, LFM_PYTHONPATH)
-
-    from liquidonnx.lfm2_audio.infer import (  # type: ignore
-        LFM2AudioInference,
-        audio_codes_to_wav,
-        resolve_precision_files,
-    )
-
-def get_gguf_client():
-    global gguf_client
-    if gguf_client is not None:
-        return gguf_client
-    try:
-        from openai import OpenAI  # type: ignore
-    except Exception as e:
-        raise RuntimeError("openai package is required for GGUF backend") from e
-    gguf_client = OpenAI(base_url=GGUF_SERVER_URL, api_key="dummy")
-    return gguf_client
-
-def write_wav_from_float32(samples, output_path, sample_rate):
-    import wave
-    pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
-    with wave.open(output_path, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(pcm.tobytes())
-
-def gguf_tts(text, output_path):
-    client = get_gguf_client()
-    messages = [
-        {"role": "system", "content": GGUF_SYSTEM_TTS},
-        {"role": "user", "content": text},
-    ]
-    stream = client.chat.completions.create(
-        model="",
-        messages=messages,
-        max_tokens=GGUF_MAX_TOKENS,
-        stream=True,
-        extra_body={"reset_context": True},
-    )
-    chunks = []
-    for chunk in stream:
-        delta = chunk.choices[0].delta
-        audio_chunk = getattr(delta, "audio_chunk", None)
-        if audio_chunk and isinstance(audio_chunk, dict):
-            data = audio_chunk.get("data")
-            if data:
-                raw = base64.b64decode(data)
-                chunks.append(np.frombuffer(raw, dtype=np.float32))
-    if not chunks:
-        raise RuntimeError("GGUF TTS produced no audio")
-    audio = np.concatenate(chunks, axis=0)
-    write_wav_from_float32(audio, output_path, GGUF_AUDIO_SAMPLE_RATE)
-
-def gguf_asr(wav_path):
-    client = get_gguf_client()
-    with open(wav_path, "rb") as f:
-        wav_b64 = base64.b64encode(f.read()).decode("utf-8")
-    messages = [
-        {"role": "system", "content": GGUF_SYSTEM_ASR},
-        {
-            "role": "user",
-            "content": [
-                {"type": "input_audio", "input_audio": {"data": wav_b64, "format": "wav"}}
-            ],
-        },
-    ]
-    stream = client.chat.completions.create(
-        model="",
-        messages=messages,
-        max_tokens=GGUF_MAX_TOKENS,
-        stream=True,
-        extra_body={"reset_context": True},
-    )
-    parts = []
-    for chunk in stream:
-        delta = chunk.choices[0].delta
-        if delta and getattr(delta, "content", None):
-            parts.append(delta.content)
-    return "".join(parts).strip()
-
 use_wav2vec2 = os.environ.get("USE_WAV2VEC2", "").lower() in {"1", "true", "yes", "on"}
-ASR_BACKEND = os.environ.get("ASR_BACKEND", "")
-if not ASR_BACKEND:
-    ASR_BACKEND = "wav2vec2_onnx" if use_wav2vec2 else "whisper_pt"
-ASR_BACKEND = ASR_BACKEND.lower()
+ASR_ENGINE = os.environ.get("ASR_ENGINE", "wav2vec2_onnx" if use_wav2vec2 else "whisper_pt").lower()
 ASR_MODEL_NAME = os.environ.get("ASR_MODEL_NAME", "facebook/wav2vec2-base-960h")
 ASR_ONNX_REPO = os.environ.get("ASR_ONNX_REPO", "onnx-community/wav2vec2-base-960h-ONNX")
+PUNCTUATE_TEXT = os.environ.get("PUNCTUATE_TEXT", "0").lower() in {"1", "true", "yes", "on"}
+TECH_NORMALIZE = os.environ.get("TECH_NORMALIZE", "0").lower() in {"1", "true", "yes", "on"}
+PUNCTUATION_MODEL = os.environ.get("PUNCTUATION_MODEL", "kredor/punctuate-all")
 
 # Initialize models
 def initialize_models():
-    global processor, whisper_model, asr_session, asr_processor
-    global lfm_model_dir, lfm_onnx_dir, lfm_files, lfm_model
+    global sess, voice_style, processor, whisper_model, asr_session, asr_processor
+    global punctuation_model, punctuation_tokenizer
 
     try:
-        if TTS_BACKEND == "lfm_onnx":
-            # Download the LFM2.5 Audio ONNX model into a real local directory (no symlinks)
-            config_path = os.path.join(LFM_MODEL_DIR, "config.json")
-            if not os.path.isfile(config_path):
-                logger.info("Downloading LFM2.5 Audio ONNX model (materialized, no symlinks)...")
-                lfm_model_dir = snapshot_download(
-                    LFM_MODEL_ID,
-                    local_dir=LFM_MODEL_DIR,
-                    local_dir_use_symlinks=False,
-                )
-                logger.info(f"LFM model directory: {lfm_model_dir}")
-            else:
-                lfm_model_dir = LFM_MODEL_DIR
-                logger.info(f"Using cached LFM model directory: {lfm_model_dir}")
+        # Download the ONNX model if not already downloaded
+        if not os.path.exists(model_path):
+            logger.info("Downloading and loading Kokoro model...")
+            kokoro_dir = snapshot_download(kokoro_model_id, cache_dir=model_path)
+            logger.info(f"Kokoro model directory: {kokoro_dir}")
+        else:
+            kokoro_dir = model_path
+            logger.info(f"Using cached Kokoro model directory: {kokoro_dir}")
 
-            # Resolve model root (config.json) and onnx dir
-            lfm_model_dir = resolve_lfm_model_root(lfm_model_dir)
-            lfm_onnx_dir = resolve_lfm_onnx_dir(lfm_model_dir)
-            logger.info(f"Resolved LFM model directory: {lfm_model_dir}")
-            logger.info(f"Resolved LFM ONNX directory: {lfm_onnx_dir}")
+        # Validate ONNX file path
+        onnx_path = None
+        for root, _, files in os.walk(kokoro_dir):
+            if 'model.onnx' in files:
+                onnx_path = os.path.join(root, 'model.onnx')
+                break
 
-            # Ensure python module for in-process inference is available
-            ensure_lfm_python()
+        if not onnx_path or not os.path.exists(onnx_path):
+            raise FileNotFoundError(f"ONNX file not found after redownload at {kokoro_dir}")
 
-            # Resolve ONNX filenames for selected precision
-            lfm_files = resolve_precision_files(LFM_PRECISION)
-            if LFM_DECODER:
-                lfm_files["decoder"] = LFM_DECODER
-            if LFM_AUDIO_EMBEDDING:
-                lfm_files["audio_embedding"] = LFM_AUDIO_EMBEDDING
-            if LFM_AUDIO_ENCODER:
-                lfm_files["audio_encoder"] = LFM_AUDIO_ENCODER
-            if LFM_AUDIO_DETOKENIZER:
-                lfm_files["audio_detokenizer"] = LFM_AUDIO_DETOKENIZER
-            if LFM_VOCODER_DEPTHFORMER:
-                lfm_files["vocoder_depthformer"] = LFM_VOCODER_DEPTHFORMER
-            if not LFM_LOAD_AUDIO_ENCODER:
-                lfm_files["audio_encoder"] = "audio_encoder.DISABLED.onnx"
+        logger.info("Loading ONNX session...")
+        sess = InferenceSession(onnx_path, sess_options)
+        logger.info(f"ONNX session loaded successfully from {onnx_path}")
 
-            lfm_model = LFM2AudioInference(
-                Path(lfm_model_dir),
-                decoder_file=lfm_files.get("decoder"),
-                audio_embedding_file=lfm_files.get("audio_embedding"),
-                audio_encoder_file=lfm_files.get("audio_encoder"),
-                audio_detokenizer_file=lfm_files.get("audio_detokenizer"),
-                vocoder_depthformer_file=lfm_files.get("vocoder_depthformer"),
-            )
+        # Load the voice style vector
+        voice_style_path = None
+        for root, _, files in os.walk(kokoro_dir):
+            if f'{voice_name}.bin' in files:
+                voice_style_path = os.path.join(root, f'{voice_name}.bin')
+                break
+
+        if not voice_style_path or not os.path.exists(voice_style_path):
+            raise FileNotFoundError(f"Voice style file not found at {voice_style_path}")
+
+        logger.info("Loading voice style vector...")
+        voice_style = np.fromfile(voice_style_path, dtype=np.float32).reshape(-1, 1, 256)
+        logger.info(f"Voice style vector loaded successfully from {voice_style_path}")
 
         # Initialize ASR engine
-        if ASR_BACKEND == "wav2vec2_onnx":
+        if ASR_ENGINE == "wav2vec2_onnx":
             logger.info(f"Loading Wav2Vec2 ONNX ASR model ({ASR_MODEL_NAME})...")
             # Load processor for feature extraction + CTC labels
             asr_processor = Wav2Vec2Processor.from_pretrained(ASR_MODEL_NAME)
@@ -340,6 +221,7 @@ def initialize_models():
                         raise FileNotFoundError("No .onnx file found in downloaded repo")
                     os.makedirs(os.path.dirname(asr_onnx_path_env), exist_ok=True)
                     # Copy to stable location
+                    import shutil
                     shutil.copyfile(onnx_path, asr_onnx_path_env)
                     logger.info(f"Downloaded ASR ONNX to {asr_onnx_path_env}")
                 except Exception as de:
@@ -348,14 +230,19 @@ def initialize_models():
                     raise
             asr_session = InferenceSession(asr_onnx_path_env, sess_options)
             logger.info("Wav2Vec2 ONNX ASR model loaded")
-        elif ASR_BACKEND == "whisper_pt":
-            logger.info("ASR_BACKEND set to whisper_pt; loading Whisper model...")
+        else:
+            logger.info("ASR_ENGINE set to whisper_pt; loading Whisper model...")
             processor = WhisperProcessor.from_pretrained("openai/whisper-base")
             whisper_model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-base")
             whisper_model.config.forced_decoder_ids = None
             logger.info("Whisper model loaded successfully")
-        else:
-            logger.info("ASR_BACKEND set to gguf; using GGUF server for ASR")
+
+        if PUNCTUATE_TEXT:
+            logger.info(f"Loading punctuation model ({PUNCTUATION_MODEL})...")
+            punctuation_tokenizer = AutoTokenizer.from_pretrained(PUNCTUATION_MODEL)
+            punctuation_model = AutoModelForTokenClassification.from_pretrained(PUNCTUATION_MODEL)
+            punctuation_model.eval()
+            logger.info("Punctuation model loaded successfully")
 
     except Exception as e:
         logger.error(f"Error initializing models: {str(e)}")
@@ -364,6 +251,149 @@ def initialize_models():
 # Initialize models
 initialize_models()
 
+def restore_punctuation(text, max_words=120):
+    if not PUNCTUATE_TEXT:
+        return text
+    if "punctuation_model" not in globals() or punctuation_model is None:
+        return text
+    words = text.strip().lower().split()
+    if not words:
+        return text
+
+    label_to_punct = {
+        "O": "",
+        "COMMA": ",",
+        "PERIOD": ".",
+        "QUESTION": "?",
+        "EXCLAMATION": "!",
+        "COLON": ":",
+        "SEMICOLON": ";",
+    }
+
+    def process_chunk(chunk_words, capitalize_next):
+        inputs = punctuation_tokenizer(
+            chunk_words,
+            is_split_into_words=True,
+            return_tensors="pt",
+            truncation=True,
+        )
+        with torch.no_grad():
+            logits = punctuation_model(**inputs).logits
+        pred_ids = torch.argmax(logits, dim=-1)[0].tolist()
+        word_ids = inputs.word_ids()
+        last_word = -1
+        word_end_labels = {}
+        for idx, word_id in enumerate(word_ids):
+            if word_id is None:
+                continue
+            if word_id != last_word:
+                last_word = word_id
+            word_end_labels[word_id] = pred_ids[idx]
+
+        decoded = []
+        for i, word in enumerate(chunk_words):
+            label_id = word_end_labels.get(i)
+            label = punctuation_model.config.id2label.get(label_id, "O")
+            punct = label_to_punct.get(label, "")
+            if capitalize_next and word:
+                word = word[0].upper() + word[1:]
+                capitalize_next = False
+            decoded.append(word + punct)
+            if punct in {".", "?", "!"}:
+                capitalize_next = True
+        return " ".join(decoded), capitalize_next
+
+    out_parts = []
+    capitalize_next = True
+    for i in range(0, len(words), max_words):
+        chunk = words[i:i + max_words]
+        chunk_text, capitalize_next = process_chunk(chunk, capitalize_next)
+        out_parts.append(chunk_text)
+    return " ".join(out_parts).strip()
+
+def normalize_tech_text(text):
+    """
+    Normalize spoken "tech" tokens (dot/com/slash/etc.) into symbols.
+    Intended for wav2vec2 output; Whisper already handles this better.
+    """
+    normalized = text
+
+    # Common domain suffixes
+    normalized = re.sub(r"\bdot com\b", ".com", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdot come\b", ".com", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdot comm\b", ".com", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdot net\b", ".net", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdot org\b", ".org", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdot io\b", ".io", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdot ai\b", ".ai", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdot co\b", ".co", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdot uk\b", ".uk", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdot dev\b", ".dev", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bdot local\b", ".local", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\.\\s+(com|net|org|io|ai|co|uk|dev|local)\\b", r".\\1", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"(\\w)\\s+\\.(com|net|org|io|ai|co|uk|dev|local)\\b", r"\\1.\\2", normalized, flags=re.IGNORECASE)
+
+    # Symbols between tokens
+    normalized = re.sub(r"(?<=\\w)\\s+dot\\s+(?=\\w)", ".", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"(?<=\\w)\\s+at\\s+(?=\\w)", "@", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"(?<=\\w)\\s+colon\\s+(?=\\w)", ":", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"(?<=\\w)\\s+dash\\s+(?=\\w)", "-", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"(?<=\\w)\\s+hyphen\\s+(?=\\w)", "-", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bhyphen\\b", "-", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bunderscore\\b", "_", normalized, flags=re.IGNORECASE)
+
+    # Slashes
+    normalized = re.sub(r"\\bback\\s+slash\\b", r"\\\\", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bbackslash\\b", r"\\\\", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bbash\\b", r"\\\\", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bforward\\s+slash\\b", "/", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bslash\\b", "/", normalized, flags=re.IGNORECASE)
+
+    # Spoken punctuation tokens
+    normalized = re.sub(r"\\bcomma\\b", ",", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bperiod\\b", ".", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bquestion\\s+mark\\b", "?", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bexclamation\\s+point\\b", "!", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bexclamation\\s+mark\\b", "!", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\\bhash\\b", "#", normalized, flags=re.IGNORECASE)
+
+    # Collapse sequences of spoken digits into numbers (useful for IPs/ports).
+    num_map = {
+        "zero": "0",
+        "oh": "0",
+        "one": "1",
+        "two": "2",
+        "three": "3",
+        "four": "4",
+        "five": "5",
+        "six": "6",
+        "seven": "7",
+        "eight": "8",
+        "nine": "9",
+    }
+    parts = normalized.split()
+    out = []
+    buffer = []
+    for token in parts:
+        lower = token.lower()
+        if lower in num_map:
+            buffer.append(num_map[lower])
+            continue
+        if lower == ".":
+            buffer.append(".")
+            continue
+        if lower == "dot":
+            buffer.append(".")
+            continue
+        if buffer:
+            out.append("".join(buffer))
+            buffer = []
+        out.append(token)
+    if buffer:
+        out.append("".join(buffer))
+    normalized = " ".join(out)
+
+    return normalized
 
 # Health check endpoint
 @app.route('/health', methods=['GET'])
@@ -386,7 +416,7 @@ def generate_audio():
 
             validate_text_input(text)
 
-            # Preprocess text (tts_processor)
+            # Preprocess & stable hash
             text = preprocess_all(text)
             text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
             filename = f"{text_hash}.wav"
@@ -397,35 +427,27 @@ def generate_audio():
                 logger.info("Returning cached audio")
                 return jsonify({"status": "success", "filename": filename})
 
-            if TTS_BACKEND == "gguf":
-                gguf_tts(text, cached_file_path)
-            else:
-                if lfm_model is None:
-                    raise Exception("LFM model not initialized")
+            # Tokenize
+            from kokoro import phonemize, tokenize  # lazy import is fine
+            tokens = tokenize(phonemize(text, 'a'))
+            if len(tokens) > 510:
+                logger.warning("Text too long; truncating to 510 tokens.")
+                tokens = tokens[:510]
+            tokens = [[0, *tokens, 0]]
 
-                # Reset cache to avoid cross-request context
-                lfm_model.reset()
+            # Style vector
+            ref_s = voice_style[len(tokens[0]) - 2]  # (1,256)
 
-                audio_codes = lfm_model.synthesize(
-                    text,
-                    max_new_tokens=int(LFM_MAX_TOKENS),
-                    audio_temperature=float(LFM_AUDIO_TEMPERATURE),
-                    audio_top_k=int(LFM_AUDIO_TOP_K),
-                    text_temperature=float(LFM_TEXT_TEMPERATURE),
-                    system_prompt=LFM_SYSTEM_PROMPT,
-                )
-                if not audio_codes:
-                    raise Exception("LFM inference produced no audio codes")
+            # ONNX inference
+            audio = sess.run(None, dict(
+                input_ids=np.array(tokens, dtype=np.int64),
+                style=ref_s,
+                speed=np.ones(1, dtype=np.float32),
+            ))[0]
 
-                ok = audio_codes_to_wav(
-                    audio_codes,
-                    cached_file_path,
-                    model_dir=Path(lfm_model_dir),
-                    audio_detokenizer_file=lfm_files.get("audio_detokenizer"),
-                )
-                if not ok or not os.path.exists(cached_file_path):
-                    raise Exception("LFM inference produced no audio output")
-
+            # Save
+            audio = np.squeeze(audio).astype(np.float32)
+            sf.write(cached_file_path, audio, 24000)
 
             logger.info(f"Audio saved: {cached_file_path}")
             return jsonify({"status": "success", "filename": filename})
@@ -434,6 +456,12 @@ def generate_audio():
             return jsonify({"status": "error", "message": str(e)}), 500
 
 # Speech-to-Text (S2T) Endpoint
+# Add these imports at the top with the other imports
+import subprocess
+import tempfile
+from pathlib import Path
+
+# Then update the transcribe_audio function:
 @app.route('/transcribe_audio', methods=['POST'])
 def transcribe_audio():
     """Speech-to-Text (S2T) Endpoint with automatic format conversion"""
@@ -483,10 +511,7 @@ def transcribe_audio():
             logger.debug("Processing audio for transcription...")
             audio_array, sampling_rate = librosa.load(converted_audio_path, sr=16000)
 
-            if ASR_BACKEND == "gguf":
-                transcription = gguf_asr(converted_audio_path)
-                logger.info(f"Transcription (GGUF): {transcription}")
-            elif ASR_BACKEND == "wav2vec2_onnx" and 'asr_session' in globals() and asr_session is not None:
+            if ASR_ENGINE == "wav2vec2_onnx" and 'asr_session' in globals() and asr_session is not None:
                 # Prepare input for Wav2Vec2 ONNX: float32 PCM, shape (batch, samples)
                 inputs = asr_processor(audio_array, sampling_rate=16000, return_tensors="np")
                 # Some exports expect input as (batch, sequence); adjust key as needed
@@ -521,7 +546,19 @@ def transcribe_audio():
                 transcription = processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
                 logger.info(f"Transcription (Whisper): {transcription}")
 
-            # No extra text post-processing for ASR output
+            if PUNCTUATE_TEXT:
+                try:
+                    transcription = restore_punctuation(transcription)
+                    logger.info(f"Transcription (Punctuated): {transcription}")
+                except Exception as pe:
+                    logger.warning(f"Punctuation restore failed: {pe}")
+
+            if TECH_NORMALIZE:
+                try:
+                    transcription = normalize_tech_text(transcription)
+                    logger.info(f"Transcription (Normalized): {transcription}")
+                except Exception as ne:
+                    logger.warning(f"Tech normalization failed: {ne}")
 
             return jsonify({"status": "success", "transcription": transcription})
         except Exception as e:
@@ -574,5 +611,4 @@ def internal_error(error):
     return {"error": "Internal Server Error", "message": "An unexpected error occurred."}, 500
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "7860"))
-    app.run(host="0.0.0.0", port=port, threaded=False, processes=1)
+    app.run(host="0.0.0.0", port=7860, threaded=False, processes=1)
