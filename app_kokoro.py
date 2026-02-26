@@ -18,6 +18,7 @@ import tempfile
 from huggingface_hub import snapshot_download
 from tts_processor import preprocess_all
 import hashlib
+import shutil
 import os
 import torch
 import numpy as np
@@ -141,10 +142,25 @@ ASR_ONNX_REPO = os.environ.get("ASR_ONNX_REPO", "onnx-community/wav2vec2-base-96
 PUNCTUATE_TEXT = os.environ.get("PUNCTUATE_TEXT", "0").lower() in {"1", "true", "yes", "on"}
 TECH_NORMALIZE = os.environ.get("TECH_NORMALIZE", "0").lower() in {"1", "true", "yes", "on"}
 PUNCTUATION_MODEL = os.environ.get("PUNCTUATION_MODEL", "kredor/punctuate-all")
+KOKORO_ONNX_MODE = os.environ.get("KOKORO_ONNX_MODE", "auto").lower()  # auto | legacy | stts2 | piper
+KOKORO_SPEAKER_ID = int(os.environ.get("KOKORO_SPEAKER_ID", "0"))
+KOKORO_MAX_PHONEME_TOKENS = int(os.environ.get("KOKORO_MAX_PHONEME_TOKENS", "510"))
+KOKORO_STTS2_NOISE_SCALE = float(os.environ.get("KOKORO_STTS2_NOISE_SCALE", "0.667"))
+KOKORO_STTS2_LENGTH_SCALE = float(os.environ.get("KOKORO_STTS2_LENGTH_SCALE", "1.0"))
+KOKORO_STTS2_NOISE_W = float(os.environ.get("KOKORO_STTS2_NOISE_W", "0.8"))
+PIPER_BIN = os.environ.get("PIPER_BIN", "piper")
+PIPER_MODEL_PATH = os.environ.get("PIPER_MODEL_PATH", "")
+PIPER_CONFIG_PATH = os.environ.get("PIPER_CONFIG_PATH", "")
+PIPER_AUTO_DOWNLOAD = os.environ.get("PIPER_AUTO_DOWNLOAD", "1").lower() in {"1", "true", "yes", "on"}
+PIPER_REPO_ID = os.environ.get("PIPER_REPO_ID", "campwill/HAL-9000-Piper-TTS")
+PIPER_REPO_MODEL_FILE = os.environ.get("PIPER_REPO_MODEL_FILE", "hal.onnx")
+PIPER_REPO_CONFIG_FILE = os.environ.get("PIPER_REPO_CONFIG_FILE", "hal.onnx.json")
+PIPER_DOWNLOAD_DIR = os.environ.get("PIPER_DOWNLOAD_DIR", os.path.join(model_path, "piper_repo"))
 
 # Initialize models
 def initialize_models():
     global sess, voice_style, processor, whisper_model, asr_session, asr_processor
+    global kokoro_tts_mode, kokoro_input_names
     global punctuation_model, punctuation_tokenizer
 
     try:
@@ -157,33 +173,58 @@ def initialize_models():
             kokoro_dir = model_path
             logger.info(f"Using cached Kokoro model directory: {kokoro_dir}")
 
-        # Validate ONNX file path
-        onnx_path = None
-        for root, _, files in os.walk(kokoro_dir):
-            if 'model.onnx' in files:
-                onnx_path = os.path.join(root, 'model.onnx')
-                break
+        if KOKORO_ONNX_MODE == "piper":
+            # Piper mode performs synthesis through the Piper CLI and does not use ORT here.
+            sess = None
+            kokoro_input_names = set()
+            kokoro_tts_mode = "piper"
+        else:
+            # Validate ONNX file path
+            onnx_path = None
+            for root, _, files in os.walk(kokoro_dir):
+                if 'model.onnx' in files:
+                    onnx_path = os.path.join(root, 'model.onnx')
+                    break
 
-        if not onnx_path or not os.path.exists(onnx_path):
-            raise FileNotFoundError(f"ONNX file not found after redownload at {kokoro_dir}")
+            if not onnx_path or not os.path.exists(onnx_path):
+                raise FileNotFoundError(f"ONNX file not found after redownload at {kokoro_dir}")
 
-        logger.info("Loading ONNX session...")
-        sess = InferenceSession(onnx_path, sess_options)
-        logger.info(f"ONNX session loaded successfully from {onnx_path}")
+            logger.info("Loading ONNX session...")
+            sess = InferenceSession(onnx_path, sess_options)
+            logger.info(f"ONNX session loaded successfully from {onnx_path}")
+            kokoro_input_names = {i.name for i in sess.get_inputs()}
+            if KOKORO_ONNX_MODE == "auto":
+                if {"input_ids", "style", "speed"}.issubset(kokoro_input_names):
+                    kokoro_tts_mode = "legacy"
+                elif {"input", "input_lengths"}.issubset(kokoro_input_names):
+                    kokoro_tts_mode = "stts2"
+                else:
+                    raise RuntimeError(
+                        f"Could not auto-detect ONNX input mode from inputs: {sorted(kokoro_input_names)}. "
+                        "Set KOKORO_ONNX_MODE=legacy or KOKORO_ONNX_MODE=stts2."
+                    )
+            elif KOKORO_ONNX_MODE in {"legacy", "stts2"}:
+                kokoro_tts_mode = KOKORO_ONNX_MODE
+            else:
+                raise ValueError("KOKORO_ONNX_MODE must be one of: auto, legacy, stts2, piper")
 
-        # Load the voice style vector
-        voice_style_path = None
-        for root, _, files in os.walk(kokoro_dir):
-            if f'{voice_name}.bin' in files:
-                voice_style_path = os.path.join(root, f'{voice_name}.bin')
-                break
+        logger.info(f"Kokoro ONNX input names: {sorted(kokoro_input_names) if kokoro_input_names else []}")
+        logger.info(f"Kokoro ONNX mode: {kokoro_tts_mode}")
 
-        if not voice_style_path or not os.path.exists(voice_style_path):
-            raise FileNotFoundError(f"Voice style file not found at {voice_style_path}")
+        if kokoro_tts_mode == "legacy":
+            # Legacy Kokoro ONNX expects a style embedding from voice .bin
+            voice_style_path = None
+            for root, _, files in os.walk(kokoro_dir):
+                if f'{voice_name}.bin' in files:
+                    voice_style_path = os.path.join(root, f'{voice_name}.bin')
+                    break
 
-        logger.info("Loading voice style vector...")
-        voice_style = np.fromfile(voice_style_path, dtype=np.float32).reshape(-1, 1, 256)
-        logger.info(f"Voice style vector loaded successfully from {voice_style_path}")
+            if not voice_style_path or not os.path.exists(voice_style_path):
+                raise FileNotFoundError(f"Voice style file not found at {voice_style_path}")
+
+            logger.info("Loading voice style vector...")
+            voice_style = np.fromfile(voice_style_path, dtype=np.float32).reshape(-1, 1, 256)
+            logger.info(f"Voice style vector loaded successfully from {voice_style_path}")
 
         # Initialize ASR engine
         if ASR_ENGINE == "wav2vec2_onnx":
@@ -250,6 +291,135 @@ def initialize_models():
 
 # Initialize models
 initialize_models()
+
+def _resolve_piper_model_and_config():
+    model_candidate = PIPER_MODEL_PATH.strip()
+    if not model_candidate:
+        model_candidate = os.path.join(model_path, "onnx", "model.onnx")
+
+    config_candidate = PIPER_CONFIG_PATH.strip()
+    if not config_candidate:
+        for cand in [
+            f"{model_candidate}.json",
+            os.path.join(os.path.dirname(model_candidate), "config.json"),
+            os.path.join(model_path, "config.json"),
+        ]:
+            if os.path.isfile(cand):
+                config_candidate = cand
+                break
+
+    missing_model = not os.path.isfile(model_candidate)
+    missing_config = not config_candidate or not os.path.isfile(config_candidate)
+
+    if (missing_model or missing_config) and PIPER_AUTO_DOWNLOAD:
+        logger.info(
+            f"Missing Piper assets (model_missing={missing_model}, config_missing={missing_config}). "
+            f"Downloading from {PIPER_REPO_ID}..."
+        )
+        allow_patterns = [PIPER_REPO_MODEL_FILE, PIPER_REPO_CONFIG_FILE]
+        try:
+            import inspect
+            sig = inspect.signature(snapshot_download)
+            if "local_dir" in sig.parameters:
+                repo_dir = snapshot_download(
+                    PIPER_REPO_ID,
+                    local_dir=PIPER_DOWNLOAD_DIR,
+                    local_dir_use_symlinks=False,
+                    allow_patterns=allow_patterns,
+                    resume_download=True,
+                )
+            else:
+                repo_dir = snapshot_download(
+                    PIPER_REPO_ID,
+                    cache_dir=PIPER_DOWNLOAD_DIR,
+                    allow_patterns=allow_patterns,
+                    resume_download=True,
+                )
+        except Exception:
+            repo_dir = snapshot_download(
+                PIPER_REPO_ID,
+                cache_dir=PIPER_DOWNLOAD_DIR,
+                allow_patterns=allow_patterns,
+                resume_download=True,
+            )
+
+        src_model = None
+        src_config = None
+        for root, _, files in os.walk(repo_dir):
+            for f in files:
+                if f == PIPER_REPO_MODEL_FILE:
+                    src_model = os.path.join(root, f)
+                elif f == PIPER_REPO_CONFIG_FILE:
+                    src_config = os.path.join(root, f)
+
+        if missing_model:
+            if not src_model:
+                raise FileNotFoundError(
+                    f"Failed to find {PIPER_REPO_MODEL_FILE} in downloaded repo {PIPER_REPO_ID}"
+                )
+            os.makedirs(os.path.dirname(model_candidate), exist_ok=True)
+            shutil.copyfile(src_model, model_candidate)
+            logger.info(f"Downloaded Piper model to {model_candidate}")
+
+        if not config_candidate:
+            config_candidate = f"{model_candidate}.json"
+
+        if not os.path.isfile(config_candidate):
+            if not src_config:
+                raise FileNotFoundError(
+                    f"Failed to find {PIPER_REPO_CONFIG_FILE} in downloaded repo {PIPER_REPO_ID}"
+                )
+            os.makedirs(os.path.dirname(config_candidate), exist_ok=True)
+            shutil.copyfile(src_config, config_candidate)
+            logger.info(f"Downloaded Piper config to {config_candidate}")
+
+    if not os.path.isfile(model_candidate):
+        raise FileNotFoundError(
+            f"Piper model not found at {model_candidate}. "
+            f"Set PIPER_MODEL_PATH or enable PIPER_AUTO_DOWNLOAD from {PIPER_REPO_ID}."
+        )
+
+    if config_candidate and not os.path.isfile(config_candidate):
+        raise FileNotFoundError(
+            f"Piper config not found at {config_candidate}. "
+            "Set PIPER_CONFIG_PATH to the .onnx.json file (for HAL use hal.onnx.json)."
+        )
+    return model_candidate, config_candidate
+
+def synthesize_with_piper(text, output_path):
+    model_file, config_file = _resolve_piper_model_and_config()
+
+    cmd = [PIPER_BIN, "--model", model_file, "--output_file", output_path]
+    if config_file:
+        cmd.extend(["--config", config_file])
+    if KOKORO_SPEAKER_ID >= 0:
+        cmd.extend(["--speaker", str(KOKORO_SPEAKER_ID)])
+
+    cmd.extend([
+        "--noise_scale", str(KOKORO_STTS2_NOISE_SCALE),
+        "--length_scale", str(KOKORO_STTS2_LENGTH_SCALE),
+        "--noise_w", str(KOKORO_STTS2_NOISE_W),
+    ])
+
+    try:
+        result = subprocess.run(
+            cmd,
+            input=text,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except FileNotFoundError as e:
+        raise RuntimeError(
+            f"Piper binary not found: {PIPER_BIN}. Install Piper or set PIPER_BIN."
+        ) from e
+
+    if result.returncode != 0:
+        raise RuntimeError(f"Piper synthesis failed: {result.stderr.strip() or result.stdout.strip()}")
+
+    if not os.path.isfile(output_path) or os.path.getsize(output_path) == 0:
+        raise RuntimeError("Piper did not produce an output wav file.")
 
 def restore_punctuation(text, max_words=120):
     if not PUNCTUATE_TEXT:
@@ -416,9 +586,18 @@ def generate_audio():
 
             validate_text_input(text)
 
-            # Preprocess & stable hash
-            text = preprocess_all(text)
-            text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+            # Use legacy preprocessing for Kokoro ONNX, but raw text for Piper.
+            text_for_tts = text if kokoro_tts_mode == "piper" else preprocess_all(text)
+            if kokoro_tts_mode == "piper":
+                cache_fingerprint = f"mode=piper|model={PIPER_MODEL_PATH}|config={PIPER_CONFIG_PATH}|speaker={KOKORO_SPEAKER_ID}"
+            elif kokoro_tts_mode == "legacy":
+                cache_fingerprint = f"mode=legacy|voice={voice_name}"
+            else:
+                cache_fingerprint = (
+                    f"mode=stts2|speaker={KOKORO_SPEAKER_ID}|"
+                    f"noise={KOKORO_STTS2_NOISE_SCALE}|len={KOKORO_STTS2_LENGTH_SCALE}|noisew={KOKORO_STTS2_NOISE_W}"
+                )
+            text_hash = hashlib.sha256(f"{cache_fingerprint}|{text_for_tts}".encode('utf-8')).hexdigest()
             filename = f"{text_hash}.wav"
             cached_file_path = os.path.join(SERVE_DIR, filename)
 
@@ -427,27 +606,54 @@ def generate_audio():
                 logger.info("Returning cached audio")
                 return jsonify({"status": "success", "filename": filename})
 
-            # Tokenize
-            from kokoro import phonemize, tokenize  # lazy import is fine
-            tokens = tokenize(phonemize(text, 'a'))
-            if len(tokens) > 510:
-                logger.warning("Text too long; truncating to 510 tokens.")
-                tokens = tokens[:510]
-            tokens = [[0, *tokens, 0]]
+            if kokoro_tts_mode == "piper":
+                synthesize_with_piper(text_for_tts, cached_file_path)
+            else:
+                # Tokenize
+                from kokoro import phonemize, tokenize  # lazy import is fine
+                tokens = tokenize(phonemize(text_for_tts, 'a'))
+                if len(tokens) > KOKORO_MAX_PHONEME_TOKENS:
+                    logger.warning(f"Text too long; truncating to {KOKORO_MAX_PHONEME_TOKENS} tokens.")
+                    tokens = tokens[:KOKORO_MAX_PHONEME_TOKENS]
 
-            # Style vector
-            ref_s = voice_style[len(tokens[0]) - 2]  # (1,256)
+                if kokoro_tts_mode == "legacy":
+                    tokens = [[0, *tokens, 0]]
+                    ref_s = voice_style[len(tokens[0]) - 2]  # (1,256)
+                    ort_inputs = {
+                        "input_ids": np.array(tokens, dtype=np.int64),
+                        "style": ref_s,
+                        "speed": np.ones(1, dtype=np.float32),
+                    }
+                else:
+                    token_ids = np.array([tokens], dtype=np.int64)
+                    ort_inputs = {}
+                    if "input" in kokoro_input_names:
+                        ort_inputs["input"] = token_ids
+                    elif "input_ids" in kokoro_input_names:
+                        ort_inputs["input_ids"] = token_ids
+                    else:
+                        first_name = sess.get_inputs()[0].name
+                        ort_inputs[first_name] = token_ids
 
-            # ONNX inference
-            audio = sess.run(None, dict(
-                input_ids=np.array(tokens, dtype=np.int64),
-                style=ref_s,
-                speed=np.ones(1, dtype=np.float32),
-            ))[0]
+                    if "input_lengths" in kokoro_input_names:
+                        ort_inputs["input_lengths"] = np.array([token_ids.shape[1]], dtype=np.int64)
+                    if "ids" in kokoro_input_names:
+                        ort_inputs["ids"] = np.array([KOKORO_SPEAKER_ID], dtype=np.int64)
+                    if "sid" in kokoro_input_names:
+                        ort_inputs["sid"] = np.array([KOKORO_SPEAKER_ID], dtype=np.int64)
+                    if "scales" in kokoro_input_names:
+                        ort_inputs["scales"] = np.array(
+                            [KOKORO_STTS2_NOISE_SCALE, KOKORO_STTS2_LENGTH_SCALE, KOKORO_STTS2_NOISE_W],
+                            dtype=np.float32,
+                        )
+                    if "speed" in kokoro_input_names:
+                        ort_inputs["speed"] = np.ones(1, dtype=np.float32)
 
-            # Save
-            audio = np.squeeze(audio).astype(np.float32)
-            sf.write(cached_file_path, audio, 24000)
+                audio = sess.run(None, ort_inputs)[0]
+
+                # Save
+                audio = np.squeeze(audio).astype(np.float32)
+                sf.write(cached_file_path, audio, 24000)
 
             logger.info(f"Audio saved: {cached_file_path}")
             return jsonify({"status": "success", "filename": filename})

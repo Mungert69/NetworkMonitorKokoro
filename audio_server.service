@@ -15,5 +15,12 @@ Environment=SERVE_DIR=/home/audioservice/app/files
 Environment=USE_WAV2VEC2=0
 Environment=PUNCTUATE_TEXT=0
 Environment=TECH_NORMALIZE=0
+Environment=KOKORO_ONNX_MODE=piper
+Environment=KOKORO_SPEAKER_ID=0
+Environment=PIPER_BIN=/usr/local/bin/piper
+Environment=PIPER_MODEL_PATH=/home/audioservice/code/services/kokoro/kokoro_model/onnx/model.onnx
+Environment=PIPER_CONFIG_PATH=/home/audioservice/code/services/kokoro/kokoro_model/onnx/model.onnx.json
+Environment=MODEL_INIT_MODE=startup
+Environment=PIPER_PREFETCH_ON_STARTUP=1
 [Install]
 WantedBy=multi-user.target

@@ -2,9 +2,11 @@
 
 ## Overview
 
-NetworkMonitorKokoro is a Flask-based service that provides advanced text-to-speech (T2S) and speech-to-text (S2T) functionalities using state-of-the-art machine learning models:
+NetworkMonitorKokoro is a Flask-based service that provides advanced text-to-speech (T2S) and speech-to-text (S2T) functionalities using multiple model backends:
 
-- **Text-to-Speech (T2S)**: Converts text input into high-quality synthesized speech using the Kokoro model.
+- **Text-to-Speech (T2S)**:
+  - Kokoro ONNX (legacy and StyleTTS2-like ONNX signatures)
+  - Piper-compatible ONNX voices (for example HAL-9000)
 - **Speech-to-Text (S2T)**: Transcribes audio files into text using OpenAI's Whisper model.
 
 This repository leverages ONNX for efficient inference and Hugging Face's model hub for seamless model downloads.
@@ -16,8 +18,9 @@ You can see the script in action with the Quantum Network Monitor Assistant at [
 ## Features
 
 - **T2S (Text-to-Speech)**
-  - High-quality voice synthesis using the Kokoro ONNX model.
-  - Configurable voice styles via preloaded voicepacks.
+  - High-quality voice synthesis using Kokoro ONNX (`KOKORO_ONNX_MODE=legacy` or `stts2`).
+  - Piper voice synthesis mode (`KOKORO_ONNX_MODE=piper`) for models like HAL-9000.
+  - Configurable speaker/style controls depending on backend.
 
 - **S2T (Speech-to-Text)**
   - Default: CPU-friendly ONNX CTC pipeline using Facebook Wav2Vec2 (facebook/wav2vec2-base-960h).
@@ -72,18 +75,32 @@ Ensure you have the following installed:
 
    Once activated, you should see `(venv)` at the start of your command prompt, indicating the virtual environment is active.
 
-3. **Install the required dependencies**:
-   - **Run the installation script** (cross-platform):
+3. **Install dependencies (choose one path)**:
+   - **Path A: you have root/sudo access (recommended)**:
      ```bash
+     ./install.sh
+     ```
+     - Installs Linux system packages (apt), optionally installs Piper globally, then installs Python dependencies.
+   - **Path B: no root/sudo access**:
+     - Ensure system dependencies from `install.sh` are already present on the machine (`espeak`, `libsndfile1`, `ffmpeg`, `curl`, `tar` on Linux).
+     - Then do Python-only setup:
+     ```bash
+     cd ~/code/services/kokoro
+     python3 -m venv venv
+     source venv/bin/activate
      python3 install_dependencies.py
      ```
-   This script detects your operating system and installs the dependencies accordingly for Linux, Windows, and macOS.
 
 4. **Set up the models**:
    - The Kokoro T2S model is downloaded automatically on first run.
+   - In Piper mode, model/config files are also auto-downloaded on first run (default: `campwill/HAL-9000-Piper-TTS`) if missing.
    - For ASR (S2T), the app auto-downloads a ready-made Wav2Vec2 ONNX model on first run. You can override the repo and path via env vars. See "ASR Engines" below.
 
-5. **Configure file serving directory (optional)**:
+5. **Install Piper runtime if using `KOKORO_ONNX_MODE=piper`**:
+   - `install.sh` prompts to install Piper globally on Linux.
+   - Or install manually and set `PIPER_BIN` (default expected path: `/usr/local/bin/piper`).
+
+6. **Configure file serving directory (optional)**:
    - The app writes generated audio to a serve directory. By default it uses `./files`.
    - To customize, set env var before start:
      ```bash
@@ -91,12 +108,13 @@ Ensure you have the following installed:
      mkdir -p "$SERVE_DIR"
      ```
 
-6. **Start the Flask server**:
+7. **Start the Flask server directly**:
    ```bash
    python3 app.py
    ```
+   - Or set up systemd service for background startup (see "Running as a Linux Service").
 
-7. **Deactivate the virtual environment** (optional):
+8. **Deactivate the virtual environment** (optional):
    ```bash
    deactivate
    ```
@@ -260,6 +278,36 @@ To run **NetworkMonitorKokoro** as a systemd service on Linux, follow these step
   python3 app.py
   ```
 
+## TTS Modes
+
+- `KOKORO_ONNX_MODE=auto` (default):
+  - Auto-detects ONNX signature and selects `legacy` or `stts2`.
+- `KOKORO_ONNX_MODE=legacy`:
+  - Uses classic Kokoro inputs (`input_ids`, `style`, `speed`) and voice `.bin` vectors.
+- `KOKORO_ONNX_MODE=stts2`:
+  - Uses StyleTTS2-like ONNX inputs (`input`/`input_lengths`, optional `ids`/`sid`, optional `scales`).
+- `KOKORO_ONNX_MODE=piper`:
+  - Uses Piper CLI to synthesize from a Piper ONNX voice model.
+  - Requires Piper binary (`PIPER_BIN`, default `piper`).
+  - Uses `PIPER_MODEL_PATH` and `PIPER_CONFIG_PATH`.
+
+### Example: Kokoro mode
+
+```bash
+export KOKORO_ONNX_MODE=legacy
+python3 app.py
+```
+
+### Example: HAL Piper mode
+
+```bash
+export KOKORO_ONNX_MODE=piper
+export PIPER_BIN=/usr/local/bin/piper
+export PIPER_MODEL_PATH=kokoro_model/onnx/model.onnx
+export PIPER_CONFIG_PATH=kokoro_model/onnx/model.onnx.json
+python3 app.py
+```
+
 #### 3. **Serve Audio Files**
 - **Endpoint**: `/files/<filename>`
 - **Method**: `GET`
@@ -273,9 +321,14 @@ To run **NetworkMonitorKokoro** as a systemd service on Linux, follow these step
 
 - Concurrency: the app uses a global lock so only one synthesis/transcription runs at a time. Internal math libraries and ONNX Runtime are also constrained to a small thread count (`MAX_THREADS=2`).
 - Models:
-  - T2S uses `onnx-community/Kokoro-82M-v1.0-ONNX`. The ONNX file `model.onnx` and voice style binary (e.g., `am_adam.bin`) are downloaded via `huggingface_hub` on first run and then cached under `kokoro_model/`.
+  - T2S supports both Kokoro ONNX and Piper voices:
+    - Kokoro default source: `onnx-community/Kokoro-82M-v1.0-ONNX`
+    - Piper default source (auto-download when missing): `campwill/HAL-9000-Piper-TTS`
   - S2T defaults to Whisper and can be switched to Wav2Vec2 ONNX with `USE_WAV2VEC2=1`.
-- Caching: generated audio is content-addressed by `sha256(preprocessed_text)`; repeated requests for the same text return the existing filename without recomputation.
+- Lazy model loading:
+  - Default is lazy (`MODEL_INIT_MODE=lazy`): TTS assets load on first `/generate_audio`, ASR assets load on first `/transcribe_audio`.
+  - Set `MODEL_INIT_MODE=startup` to preload everything at app start.
+- Caching: generated audio filenames are content-addressed and include backend/mode fingerprinting to avoid collisions across TTS backends.
 - File location: generated WAV files are saved to `$SERVE_DIR` (default `./files`).
 
 ---
@@ -298,21 +351,21 @@ To run **NetworkMonitorKokoro** as a systemd service on Linux, follow these step
   # => {"status":"success","transcription":"..."}
   ```
 
-### Example Requests
+### Example Requests (alternate form)
 
 #### Generate Audio
 ```bash
-curl -X POST \
-     -H "Content-Type: application/json" \
-     -d '{"text": "Hello, world!","output_dir":"/tmp"}' \
-     http://127.0.0.1:5000/generate_audio
+curl -sX POST \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Hello, world!"}' \
+  http://127.0.0.1:7860/generate_audio
 ```
 
 #### Transcribe Audio
 ```bash
-curl -X POST \
-     -F "file=@sample_audio.wav" \
-     http://127.0.0.1:5000/transcribe_audio
+curl -sX POST \
+  -F "file=@sample_audio.wav" \
+  http://127.0.0.1:7860/transcribe_audio
 ```
 
 ---
