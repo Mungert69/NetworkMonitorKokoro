@@ -3,11 +3,16 @@ Description=Audio Server
 After=network.target
 
 [Service]
-ExecStart=/home/audioservice/code/services/kokoro/venv/bin/python3 /home/audioservice/code/services/kokoro/app.py
+ExecStart=/home/audioservice/code/services/kokoro/venv/bin/gunicorn --bind 0.0.0.0:7860 --workers 1 --threads 1 --timeout 600 --graceful-timeout 60 --keep-alive 5 --access-logfile - --error-logfile - app:app
 WorkingDirectory=/home/audioservice/code/services/kokoro
 Restart=always
+RestartSec=2
 User=audioservice
 Environment=PYTHONUNBUFFERED=1
+Environment=LOG_LEVEL=INFO
+Environment=REQUEST_LOCK_TIMEOUT_SEC=15
+Environment=PIPER_TIMEOUT_SEC=120
+Environment=FFMPEG_TIMEOUT_SEC=300
 Nice=-10
 CPUSchedulingPolicy=fifo 
 CPUSchedulingPriority=1

@@ -13,8 +13,11 @@ import logging
 from flask_cors import CORS
 import re
 import threading
+import time
 import werkzeug
 import tempfile
+import subprocess
+from pathlib import Path
 from huggingface_hub import snapshot_download
 from tts_processor import preprocess_all
 import hashlib
@@ -47,7 +50,11 @@ sess_options.inter_op_num_threads = 1
 
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
@@ -158,6 +165,9 @@ PIPER_REPO_CONFIG_FILE = os.environ.get("PIPER_REPO_CONFIG_FILE", "hal.onnx.json
 PIPER_DOWNLOAD_DIR = os.environ.get("PIPER_DOWNLOAD_DIR", os.path.join(model_path, "piper_repo"))
 MODEL_INIT_MODE = os.environ.get("MODEL_INIT_MODE", "lazy").lower()  # lazy | startup
 PIPER_PREFETCH_ON_STARTUP = os.environ.get("PIPER_PREFETCH_ON_STARTUP", "0").lower() in {"1", "true", "yes", "on"}
+REQUEST_LOCK_TIMEOUT_SEC = float(os.environ.get("REQUEST_LOCK_TIMEOUT_SEC", "15"))
+PIPER_TIMEOUT_SEC = float(os.environ.get("PIPER_TIMEOUT_SEC", "120"))
+FFMPEG_TIMEOUT_SEC = float(os.environ.get("FFMPEG_TIMEOUT_SEC", "60"))
 
 sess = None
 voice_style = None
@@ -492,10 +502,16 @@ def synthesize_with_piper(text, output_path):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
+            timeout=PIPER_TIMEOUT_SEC,
         )
     except FileNotFoundError as e:
         raise RuntimeError(
             f"Piper binary not found: {PIPER_BIN}. Install Piper or set PIPER_BIN."
+        ) from e
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(
+            f"Piper synthesis timed out after {PIPER_TIMEOUT_SEC:.0f}s. "
+            f"Command: {' '.join(cmd)}"
         ) from e
 
     if result.returncode != 0:
@@ -661,12 +677,24 @@ def health_check():
 @app.route('/generate_audio', methods=['POST'])
 def generate_audio():
     """Text-to-Speech (T2S) Endpoint"""
-    with global_lock:
+    request_id = str(uuid.uuid4())[:8]
+    start_time = time.monotonic()
+    logger.info(f"[{request_id}] /generate_audio request received")
+    acquired = global_lock.acquire(timeout=REQUEST_LOCK_TIMEOUT_SEC)
+    if not acquired:
+        logger.warning(
+            f"[{request_id}] /generate_audio lock wait exceeded {REQUEST_LOCK_TIMEOUT_SEC:.0f}s"
+        )
+        return jsonify({
+            "status": "error",
+            "message": "Service busy: previous request still running",
+        }), 503
+    try:
+        logger.info(f"[{request_id}] /generate_audio lock acquired")
         try:
             ensure_models_for_tts()
-            logger.debug("Received request to /generate_audio")
-            data = request.json
-            text = data['text']
+            data = request.get_json(silent=True) or {}
+            text = data.get("text")
 
             validate_text_input(text)
 
@@ -687,7 +715,7 @@ def generate_audio():
 
             # Cache hit
             if is_cached(cached_file_path):
-                logger.info("Returning cached audio")
+                logger.info(f"[{request_id}] Returning cached audio: {filename}")
                 return jsonify({"status": "success", "filename": filename})
 
             if kokoro_tts_mode == "piper":
@@ -739,42 +767,63 @@ def generate_audio():
                 audio = np.squeeze(audio).astype(np.float32)
                 sf.write(cached_file_path, audio, 24000)
 
-            logger.info(f"Audio saved: {cached_file_path}")
+            elapsed = time.monotonic() - start_time
+            logger.info(f"[{request_id}] Audio saved: {cached_file_path} ({elapsed:.2f}s)")
             return jsonify({"status": "success", "filename": filename})
         except Exception as e:
-            logger.error(f"Error generating audio: {str(e)}")
+            elapsed = time.monotonic() - start_time
+            logger.exception(f"[{request_id}] Error generating audio after {elapsed:.2f}s: {str(e)}")
             return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        global_lock.release()
+        elapsed = time.monotonic() - start_time
+        logger.info(f"[{request_id}] /generate_audio completed ({elapsed:.2f}s)")
 
 # Speech-to-Text (S2T) Endpoint
-# Add these imports at the top with the other imports
-import subprocess
-import tempfile
-from pathlib import Path
-
-# Then update the transcribe_audio function:
 @app.route('/transcribe_audio', methods=['POST'])
 def transcribe_audio():
     """Speech-to-Text (S2T) Endpoint with automatic format conversion"""
-    with global_lock:  # Acquire global lock to ensure only one instance runs
-        input_audio_path = None
-        converted_audio_path = None
+    request_id = str(uuid.uuid4())[:8]
+    start_time = time.monotonic()
+    logger.info(f"[{request_id}] /transcribe_audio request received")
+    acquired = global_lock.acquire(timeout=REQUEST_LOCK_TIMEOUT_SEC)
+    if not acquired:
+        logger.warning(
+            f"[{request_id}] /transcribe_audio lock wait exceeded {REQUEST_LOCK_TIMEOUT_SEC:.0f}s"
+        )
+        return jsonify({
+            "status": "error",
+            "message": "Service busy: previous request still running",
+        }), 503
+    input_audio_path = None
+    converted_audio_path = None
+    try:
+        logger.info(f"[{request_id}] /transcribe_audio lock acquired")
         try:
             ensure_models_for_asr()
-            logger.debug("Received request to /transcribe_audio")
+            if 'file' not in request.files:
+                logger.warning(f"[{request_id}] No audio file part in request")
+                return jsonify({"status": "error", "message": "Missing file field 'file'"}), 400
             file = request.files['file']
+            validate_audio_file(file)
+            logger.info(
+                f"[{request_id}] STT input accepted: name={file.filename!r} "
+                f"content_type={file.content_type!r}"
+            )
             
             # Create temporary files for both input and output
             with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix) as input_temp:
                 input_audio_path = input_temp.name
                 file.save(input_audio_path)
-                logger.debug(f"Original audio file saved to {input_audio_path}")
+                input_size = os.path.getsize(input_audio_path)
+                logger.info(f"[{request_id}] Input audio saved to {input_audio_path} ({input_size} bytes)")
             
             # Create a temporary file for the converted WAV
             with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as output_temp:
                 converted_audio_path = output_temp.name
             
             # Convert to WAV with ffmpeg (16kHz, mono)
-            logger.debug(f"Converting audio to 16kHz mono WAV format...")
+            logger.info(f"[{request_id}] FFmpeg conversion started (timeout={FFMPEG_TIMEOUT_SEC:.0f}s)")
             conversion_command = [
                 'ffmpeg',
                 '-y',                  # Force overwrite without prompting
@@ -785,24 +834,42 @@ def transcribe_audio():
                 '-af', 'highpass=f=80,lowpass=f=7500,afftdn=nr=10:nf=-25,loudnorm=I=-16:TP=-1.5:LRA=11',  # Audio cleanup filters
                 converted_audio_path
             ]
-            result = subprocess.run(
-                conversion_command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            
+            try:
+                ffmpeg_start = time.monotonic()
+                result = subprocess.run(
+                    conversion_command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=FFMPEG_TIMEOUT_SEC,
+                )
+                ffmpeg_elapsed = time.monotonic() - ffmpeg_start
+            except subprocess.TimeoutExpired as e:
+                raise RuntimeError(
+                    f"FFmpeg conversion timed out after {FFMPEG_TIMEOUT_SEC:.0f}s"
+                ) from e
+
             if result.returncode != 0:
                 logger.error(f"FFmpeg conversion error: {result.stderr}")
                 raise Exception(f"Audio conversion failed: {result.stderr}")
             
-            logger.debug(f"Audio successfully converted to {converted_audio_path}")
+            converted_size = os.path.getsize(converted_audio_path)
+            logger.info(
+                f"[{request_id}] FFmpeg conversion complete in {ffmpeg_elapsed:.2f}s "
+                f"-> {converted_audio_path} ({converted_size} bytes)"
+            )
             
             # Load and process the converted audio
-            logger.debug("Processing audio for transcription...")
+            logger.info(f"[{request_id}] Loading converted audio for ASR")
             audio_array, sampling_rate = librosa.load(converted_audio_path, sr=16000)
+            duration_sec = (len(audio_array) / sampling_rate) if sampling_rate else 0.0
+            logger.info(
+                f"[{request_id}] ASR input ready: samples={len(audio_array)} "
+                f"rate={sampling_rate} duration={duration_sec:.2f}s engine={ASR_ENGINE}"
+            )
 
             if ASR_ENGINE == "wav2vec2_onnx" and 'asr_session' in globals() and asr_session is not None:
+                asr_start = time.monotonic()
                 # Prepare input for Wav2Vec2 ONNX: float32 PCM, shape (batch, samples)
                 inputs = asr_processor(audio_array, sampling_rate=16000, return_tensors="np")
                 # Some exports expect input as (batch, sequence); adjust key as needed
@@ -823,8 +890,13 @@ def transcribe_audio():
                 # Collapse repeats and remove CTC blank (id 0 for many models; rely on processor)
                 transcription = asr_processor.batch_decode(pred_ids)[0]
                 transcription = transcription.strip()
-                logger.info(f"Transcription (Wav2Vec2 ONNX): {transcription}")
+                asr_elapsed = time.monotonic() - asr_start
+                logger.info(
+                    f"[{request_id}] ASR (Wav2Vec2 ONNX) complete in {asr_elapsed:.2f}s "
+                    f"(chars={len(transcription)})"
+                )
             else:
+                asr_start = time.monotonic()
                 # Whisper fallback
                 input_features = processor(
                     audio_array,
@@ -835,7 +907,11 @@ def transcribe_audio():
                 logger.debug("Generating transcription (Whisper)...")
                 predicted_ids = whisper_model.generate(input_features)
                 transcription = processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
-                logger.info(f"Transcription (Whisper): {transcription}")
+                asr_elapsed = time.monotonic() - asr_start
+                logger.info(
+                    f"[{request_id}] ASR (Whisper) complete in {asr_elapsed:.2f}s "
+                    f"(chars={len(transcription)})"
+                )
 
             if PUNCTUATE_TEXT:
                 try:
@@ -851,9 +927,14 @@ def transcribe_audio():
                 except Exception as ne:
                     logger.warning(f"Tech normalization failed: {ne}")
 
+            preview = transcription[:160].replace("\n", " ").strip()
+            if len(transcription) > 160:
+                preview += "..."
+            logger.info(f"[{request_id}] STT transcription preview: {preview}")
             return jsonify({"status": "success", "transcription": transcription})
         except Exception as e:
-            logger.error(f"Error transcribing audio: {str(e)}")
+            elapsed = time.monotonic() - start_time
+            logger.exception(f"[{request_id}] Error transcribing audio after {elapsed:.2f}s: {str(e)}")
             return jsonify({"status": "error", "message": str(e)}), 500
         finally:
             # Clean up temporary files
@@ -864,6 +945,10 @@ def transcribe_audio():
                         logger.debug(f"Temporary file {path} removed")
                     except Exception as e:
                         logger.warning(f"Failed to remove temporary file {path}: {e}")
+    finally:
+        global_lock.release()
+        elapsed = time.monotonic() - start_time
+        logger.info(f"[{request_id}] /transcribe_audio completed ({elapsed:.2f}s)")
 
 @app.route('/files/<filename>', methods=['GET'])
 def serve_wav_file(filename):

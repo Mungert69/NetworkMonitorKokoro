@@ -6,6 +6,7 @@ import sys
 COMMON_REQUIREMENTS = [
     "flask",
     "flask-cors",
+    "gunicorn",
     "transformers",
     "librosa",
     "numpy",
