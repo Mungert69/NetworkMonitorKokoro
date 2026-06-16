@@ -724,9 +724,9 @@ def generate_audio():
                 # Tokenize
                 from kokoro import phonemize, tokenize  # lazy import is fine
                 tokens = tokenize(phonemize(text_for_tts, 'a'))
-                if len(tokens) > KOKORO_MAX_PHONEME_TOKENS:
-                    logger.warning(f"Text too long; truncating to {KOKORO_MAX_PHONEME_TOKENS} tokens.")
-                    tokens = tokens[:KOKORO_MAX_PHONEME_TOKENS]
+                if len(tokens) > KOKORO_MAX_PHONEME_TOKENS - 1:
+                    logger.warning(f"Text too long; truncating to {KOKORO_MAX_PHONEME_TOKENS - 1} tokens.")
+                    tokens = tokens[:KOKORO_MAX_PHONEME_TOKENS - 1]
 
                 if kokoro_tts_mode == "legacy":
                     tokens = [[0, *tokens, 0]]
