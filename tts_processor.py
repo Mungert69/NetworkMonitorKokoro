@@ -382,6 +382,7 @@ def tech_humanize(text):
     text = re.sub(r"(?<=\w)-(?=\w)", " dash ", text)
     text = re.sub(r"(?<=\w)_(?=\w)", " underscore ", text)
     text = re.sub(r"(?<=\w):(?=\w)", " colon ", text)
+    text = re.sub(r"-{3,}", "", text)
     text = re.sub(r"--", " double dash ", text)
     text = re.sub(r"->", " arrow ", text)
     text = re.sub(r"=>", " arrow ", text)

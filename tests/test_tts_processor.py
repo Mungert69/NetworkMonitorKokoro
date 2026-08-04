@@ -32,6 +32,18 @@ class TestTtsProcessor(unittest.TestCase):
         out = preprocess_all(text)
         self.assertIn("port twenty five", out)
 
+    def test_triple_dash_silenced(self):
+        text = "|---|---|---|"
+        out = preprocess_all(text)
+        self.assertNotIn("double dash", out)
+        self.assertNotIn("dash", out)
+
+    def test_four_dashes_silenced(self):
+        text = "----"
+        out = preprocess_all(text)
+        self.assertNotIn("double dash", out)
+        self.assertNotIn("dash", out)
+
     def test_double_dash(self):
         text = "Use --testmode for debug"
         out = preprocess_all(text)
