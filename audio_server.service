@@ -18,6 +18,9 @@ CPUSchedulingPolicy=fifo
 CPUSchedulingPriority=1
 Environment=SERVE_DIR=/home/audioservice/app/files   
 Environment=USE_WAV2VEC2=0
+Environment=ENABLE_STT=1
+Environment=ASR_ENGINE=moonshine
+Environment=MOONSHINE_MODEL_ARCH=medium-streaming
 Environment=PUNCTUATE_TEXT=0
 Environment=TECH_NORMALIZE=0
 Environment=KOKORO_ONNX_MODE=legacy

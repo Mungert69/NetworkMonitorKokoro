@@ -7,7 +7,7 @@ NetworkMonitorKokoro is a Flask-based service that provides advanced text-to-spe
 - **Text-to-Speech (T2S)**:
   - Kokoro ONNX (legacy and StyleTTS2-like ONNX signatures)
   - Piper-compatible ONNX voices (for example HAL-9000)
-- **Speech-to-Text (S2T)**: Transcribes audio files into text using OpenAI's Whisper model.
+- **Speech-to-Text (S2T)**: Transcribes audio files using Moonshine Voice, with an optional Wav2Vec2 ONNX backend.
 
 This repository leverages ONNX for efficient inference and Hugging Face's model hub for seamless model downloads.
 
@@ -23,8 +23,9 @@ You can see the script in action with the Quantum Network Monitor Assistant at [
   - Configurable speaker/style controls depending on backend.
 
 - **S2T (Speech-to-Text)**
-  - Default: CPU-friendly ONNX CTC pipeline using Facebook Wav2Vec2 (facebook/wav2vec2-base-960h).
-  - Fallback: OpenAI Whisper (PyTorch) when enabled.
+  - Default: Moonshine Medium Streaming, running locally through ONNX Runtime.
+  - Optional: Wav2Vec2 ONNX CTC pipeline (`facebook/wav2vec2-base-960h`).
+  - Can be disabled on TTS-only deployments with `ENABLE_STT=0`.
   - Handles a wide range of audio inputs.
 
 - **Automatic Model Management**
@@ -94,7 +95,7 @@ Ensure you have the following installed:
 4. **Set up the models**:
    - The Kokoro T2S model is downloaded automatically on first run.
    - In Piper mode, model/config files are also auto-downloaded on first run (default: `campwill/HAL-9000-Piper-TTS`) if missing.
-   - For ASR (S2T), the app auto-downloads a ready-made Wav2Vec2 ONNX model on first run. You can override the repo and path via env vars. See "ASR Engines" below.
+   - For ASR (S2T), the app downloads the selected Moonshine model on first run. Wav2Vec2 ONNX is also available; see "ASR Engines" below.
 
 5. **Install Piper runtime if using `KOKORO_ONNX_MODE=piper`**:
    - `install.sh` prompts to install Piper globally on Linux.
@@ -221,22 +222,31 @@ To run **NetworkMonitorKokoro** as a systemd service on Linux, follow these step
 - **Request**:
   - `multipart/form-data` with file field name `file`.
   - Supported containers: WAV, MP3, WebM, Ogg/Opus, etc. The server converts input to 16kHz mono WAV using `ffmpeg` and applies light denoise/normalization filters.
-- **Response**:
+- **Successful response**:
   ```json
   {
     "status": "success",
     "transcription": "Your transcription here"
   }
   ```
+- **Error responses**:
+  - HTTP 422 with `code: "no_speech_detected"` when voice activity detection finds no speech.
+  - HTTP 422 with `code: "empty_transcription"` when speech is detected but the ASR model returns no text.
+  - HTTP 503 with `code: "stt_disabled"` when speech-to-text is disabled with `ENABLE_STT=0`.
 
 ---
 
 ## ASR Engines
 
+- STT availability:
+  - Enabled by default. Silero VAD checks for speech before ASR to avoid returning invented text for silence or noise.
+  - Set `ENABLE_STT=0` for a TTS-only deployment; the service skips VAD and ASR initialization, and `/transcribe_audio` returns HTTP 503 with code `stt_disabled`.
+  - VAD settings can be adjusted with `VAD_THRESHOLD` (default `0.5`) and `VAD_MIN_SPEECH_MS` (default `250`).
 - Engine selection:
-  - Default is Whisper (`whisper_pt`).
-  - Set `USE_WAV2VEC2=1` to use the ONNX Wav2Vec2 pipeline.
-  - You can also override directly with `ASR_ENGINE=wav2vec2_onnx` or `ASR_ENGINE=whisper_pt`.
+  - Default is Moonshine (`ASR_ENGINE=moonshine`) with the English `medium-streaming` model.
+  - Set `MOONSHINE_MODEL_ARCH` to `medium-streaming`, `small-streaming`, `tiny-streaming`, `base`, or `tiny` to select another supported English model.
+  - Set `USE_WAV2VEC2=1` or `ASR_ENGINE=wav2vec2_onnx` to use the optional ONNX Wav2Vec2 pipeline.
+  - Moonshine downloads the selected model automatically on first start and reuses the local cache afterward.
 
 - Wav2Vec2 model selection:
   - Default model: `facebook/wav2vec2-base-960h`
@@ -272,10 +282,14 @@ To run **NetworkMonitorKokoro** as a systemd service on Linux, follow these step
   python3 app.py
   ```
 
-- Example run with Whisper fallback:
+- Example run with default Moonshine STT:
   ```bash
-  # default is whisper, so no flags needed
   python3 app.py
+  ```
+
+- Example run as a TTS-only service:
+  ```bash
+  ENABLE_STT=0 python3 app.py
   ```
 
 ## TTS Modes
@@ -319,12 +333,13 @@ python3 app.py
 
 ## Operational Details
 
-- Concurrency: the app uses a global lock so only one synthesis/transcription runs at a time. Internal math libraries and ONNX Runtime are also constrained to a small thread count (`MAX_THREADS=2`).
+- Concurrency: the app uses a global lock so only one synthesis/transcription runs at a time. Internal math libraries, PyTorch, and ONNX Runtime use the configurable thread count in `MAX_THREADS` (default `2`).
 - Models:
   - T2S supports both Kokoro ONNX and Piper voices:
     - Kokoro default source: `onnx-community/Kokoro-82M-v1.0-ONNX`
     - Piper default source (auto-download when missing): `campwill/HAL-9000-Piper-TTS`
-  - S2T defaults to Whisper and can be switched to Wav2Vec2 ONNX with `USE_WAV2VEC2=1`.
+  - S2T defaults to Moonshine Medium Streaming and can be switched to Wav2Vec2 ONNX with `USE_WAV2VEC2=1`.
+  - Set `ENABLE_STT=0` on TTS-only deployments to skip VAD and speech-recognition model initialization.
 - Lazy model loading:
   - Default is lazy (`MODEL_INIT_MODE=lazy`): TTS assets load on first `/generate_audio`, ASR assets load on first `/transcribe_audio`.
   - Set `MODEL_INIT_MODE=startup` to preload everything at app start.
@@ -373,6 +388,8 @@ curl -sX POST \
 ## Dependencies
 
 - [Transformers](https://huggingface.co/transformers)
+- [Moonshine Voice](https://pypi.org/project/moonshine-voice/) (default English ASR backend)
+- [Silero VAD](https://github.com/snakers4/silero-vad) (speech activity detection before ASR)
 - [ONNX Runtime](https://onnxruntime.ai/)
 - [Librosa](https://librosa.org/)
 - [SoundFile](https://pysoundfile.readthedocs.io/)
@@ -401,7 +418,7 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 ## Acknowledgements
 
 - Hugging Face for providing pre-trained models.
-- OpenAI for the Whisper model.
+- Moonshine AI for the Moonshine Voice models.
 - ONNX for efficient inference.
 
 ---

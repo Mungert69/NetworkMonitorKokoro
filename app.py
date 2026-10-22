@@ -1,8 +1,5 @@
 from flask import Flask, request, jsonify, send_from_directory, abort
-from transformers import WhisperProcessor, WhisperForConditionalGeneration
-from transformers import Wav2Vec2Processor, AutoTokenizer, AutoModelForTokenClassification
 import librosa
-import torch
 import numpy as np
 from onnxruntime import InferenceSession
 import soundfile as sf
@@ -22,15 +19,20 @@ from huggingface_hub import snapshot_download
 from tts_processor import preprocess_all, strip_markdown
 import hashlib
 import shutil
-import os
-import torch
 import numpy as np
 import onnxruntime as ort
+
+ENABLE_STT = os.environ.get("ENABLE_STT", "1").lower() in {"1", "true", "yes", "on"}
+if ENABLE_STT:
+    import torch
+    from silero_vad import get_speech_timestamps
+else:
+    torch = None
 
 # ---------------------------
 # THREAD LIMIT CONFIG
 # ---------------------------
-MAX_THREADS = 2  # <-- change this number to control all thread usage
+MAX_THREADS = int(os.environ.get("MAX_THREADS", "2"))
 
 # Limit NumPy / BLAS / MKL threads
 os.environ["OMP_NUM_THREADS"] = str(MAX_THREADS)
@@ -40,8 +42,9 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = str(MAX_THREADS)
 os.environ["NUMEXPR_NUM_THREADS"] = str(MAX_THREADS)
 
 # Torch thread limits
-torch.set_num_threads(MAX_THREADS)
-torch.set_num_interop_threads(1)  # keep inter-op small to avoid overhead
+if torch is not None:
+    torch.set_num_threads(MAX_THREADS)
+    torch.set_num_interop_threads(1)  # keep inter-op small to avoid overhead
 
 # ONNXRuntime session options (use when creating the session)
 sess_options = ort.SessionOptions()
@@ -56,6 +59,8 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger(__name__)
+if not ENABLE_STT:
+    logger.info("Speech-to-text is disabled by ENABLE_STT=0")
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
@@ -143,7 +148,8 @@ def is_cached(cached_file_path):
     return exists
 
 use_wav2vec2 = os.environ.get("USE_WAV2VEC2", "").lower() in {"1", "true", "yes", "on"}
-ASR_ENGINE = os.environ.get("ASR_ENGINE", "wav2vec2_onnx" if use_wav2vec2 else "whisper_pt").lower()
+ASR_ENGINE = os.environ.get("ASR_ENGINE", "wav2vec2_onnx" if use_wav2vec2 else "moonshine").lower()
+MOONSHINE_MODEL_ARCH = os.environ.get("MOONSHINE_MODEL_ARCH", "medium-streaming").lower()
 ASR_MODEL_NAME = os.environ.get("ASR_MODEL_NAME", "facebook/wav2vec2-base-960h")
 ASR_ONNX_REPO = os.environ.get("ASR_ONNX_REPO", "onnx-community/wav2vec2-base-960h-ONNX")
 PUNCTUATE_TEXT = os.environ.get("PUNCTUATE_TEXT", "0").lower() in {"1", "true", "yes", "on"}
@@ -168,11 +174,13 @@ PIPER_PREFETCH_ON_STARTUP = os.environ.get("PIPER_PREFETCH_ON_STARTUP", "0").low
 REQUEST_LOCK_TIMEOUT_SEC = float(os.environ.get("REQUEST_LOCK_TIMEOUT_SEC", "15"))
 PIPER_TIMEOUT_SEC = float(os.environ.get("PIPER_TIMEOUT_SEC", "120"))
 FFMPEG_TIMEOUT_SEC = float(os.environ.get("FFMPEG_TIMEOUT_SEC", "60"))
+VAD_THRESHOLD = float(os.environ.get("VAD_THRESHOLD", "0.5"))
+VAD_MIN_SPEECH_MS = int(os.environ.get("VAD_MIN_SPEECH_MS", "250"))
 
 sess = None
 voice_style = None
-processor = None
-whisper_model = None
+asr_transcriber = None
+vad_model = None
 asr_session = None
 asr_processor = None
 punctuation_model = None
@@ -183,11 +191,18 @@ model_init_lock = threading.Lock()
 
 # Initialize models
 def initialize_models(init_tts=True, init_asr=True):
-    global sess, voice_style, processor, whisper_model, asr_session, asr_processor
+    global sess, voice_style, asr_transcriber, vad_model, asr_session, asr_processor
     global kokoro_tts_mode, kokoro_input_names
     global punctuation_model, punctuation_tokenizer
 
     try:
+        if not ENABLE_STT:
+            init_asr = False
+        elif ASR_ENGINE not in {"moonshine", "wav2vec2_onnx"}:
+            raise ValueError(
+                f"Unsupported ASR_ENGINE={ASR_ENGINE!r}; supported engines are moonshine and wav2vec2_onnx"
+            )
+
         if os.path.exists(model_path) and not os.path.isdir(model_path):
             raise FileExistsError(f"Model path exists but is not a directory: {model_path}")
 
@@ -296,9 +311,18 @@ def initialize_models(init_tts=True, init_asr=True):
                 logger.info(f"Voice style vector loaded successfully from {voice_style_path}")
 
         # Initialize ASR engine
+        if init_asr and vad_model is None:
+            logger.info("Loading Silero VAD model...")
+            from silero_vad import load_silero_vad
+            vad_model = load_silero_vad(onnx=True)
+            # silero-vad sets Torch's global thread count while importing.
+            torch.set_num_threads(MAX_THREADS)
+            logger.info("Silero VAD model loaded successfully")
+
         if init_asr and ASR_ENGINE == "wav2vec2_onnx" and asr_session is None:
             logger.info(f"Loading Wav2Vec2 ONNX ASR model ({ASR_MODEL_NAME})...")
             # Load processor for feature extraction + CTC labels
+            from transformers import Wav2Vec2Processor
             asr_processor = Wav2Vec2Processor.from_pretrained(ASR_MODEL_NAME)
 
             # Try to locate/download ONNX model; if not present, download a ready-made ONNX repo.
@@ -336,18 +360,37 @@ def initialize_models(init_tts=True, init_asr=True):
                     logger.info(f"Downloaded ASR ONNX to {asr_onnx_path_env}")
                 except Exception as de:
                     logger.error(f"Failed to download ASR ONNX: {de}")
-                    logger.warning("Falling back to Whisper PT engine.")
+                    logger.error("Wav2Vec2 ONNX initialization failed; no fallback ASR engine is configured.")
                     raise
             asr_session = InferenceSession(asr_onnx_path_env, sess_options)
             logger.info("Wav2Vec2 ONNX ASR model loaded")
-        elif init_asr and ASR_ENGINE != "wav2vec2_onnx" and (processor is None or whisper_model is None):
-            logger.info("ASR_ENGINE set to whisper_pt; loading Whisper model...")
-            processor = WhisperProcessor.from_pretrained("openai/whisper-base")
-            whisper_model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-base")
-            whisper_model.config.forced_decoder_ids = None
-            logger.info("Whisper model loaded successfully")
+        elif init_asr and ASR_ENGINE == "moonshine" and asr_transcriber is None:
+            from moonshine_voice import ModelArch, Transcriber, get_model_for_language
+
+            model_arches = {
+                "tiny": ModelArch.TINY,
+                "base": ModelArch.BASE,
+                "tiny-streaming": ModelArch.TINY_STREAMING,
+                "small-streaming": ModelArch.SMALL_STREAMING,
+                "medium-streaming": ModelArch.MEDIUM_STREAMING,
+            }
+            if MOONSHINE_MODEL_ARCH not in model_arches:
+                raise ValueError(
+                    f"Unsupported MOONSHINE_MODEL_ARCH={MOONSHINE_MODEL_ARCH!r}; "
+                    f"choose one of {', '.join(model_arches)}"
+                )
+            moonshine_model_path, model_arch = get_model_for_language(
+                "en", model_arches[MOONSHINE_MODEL_ARCH]
+            )
+            logger.info(
+                f"Loading Moonshine ASR model ({MOONSHINE_MODEL_ARCH}) from {moonshine_model_path}..."
+            )
+            asr_transcriber = Transcriber(model_path=moonshine_model_path, model_arch=model_arch)
+            logger.info("Moonshine ASR model loaded successfully")
 
         if init_asr and PUNCTUATE_TEXT and punctuation_model is None:
+            from transformers import AutoTokenizer, AutoModelForTokenClassification
+
             logger.info(f"Loading punctuation model ({PUNCTUATION_MODEL})...")
             punctuation_tokenizer = AutoTokenizer.from_pretrained(PUNCTUATION_MODEL)
             punctuation_model = AutoModelForTokenClassification.from_pretrained(PUNCTUATION_MODEL)
@@ -366,15 +409,19 @@ def ensure_models_for_tts():
             initialize_models(init_tts=True, init_asr=False)
 
 def ensure_models_for_asr():
-    asr_ready = (ASR_ENGINE == "wav2vec2_onnx" and asr_session is not None) or (
-        ASR_ENGINE != "wav2vec2_onnx" and processor is not None and whisper_model is not None
+    if not ENABLE_STT:
+        raise RuntimeError("Speech-to-text is disabled on this service")
+    asr_ready = vad_model is not None and (
+        (ASR_ENGINE == "wav2vec2_onnx" and asr_session is not None)
+        or (ASR_ENGINE == "moonshine" and asr_transcriber is not None)
     )
     punct_ready = (not PUNCTUATE_TEXT) or (punctuation_model is not None and punctuation_tokenizer is not None)
     if asr_ready and punct_ready:
         return
     with model_init_lock:
-        asr_ready = (ASR_ENGINE == "wav2vec2_onnx" and asr_session is not None) or (
-            ASR_ENGINE != "wav2vec2_onnx" and processor is not None and whisper_model is not None
+        asr_ready = vad_model is not None and (
+            (ASR_ENGINE == "wav2vec2_onnx" and asr_session is not None)
+            or (ASR_ENGINE == "moonshine" and asr_transcriber is not None)
         )
         punct_ready = (not PUNCTUATE_TEXT) or (punctuation_model is not None and punctuation_tokenizer is not None)
         if not (asr_ready and punct_ready):
@@ -475,7 +522,7 @@ def _resolve_piper_model_and_config():
     return model_candidate, config_candidate
 
 if MODEL_INIT_MODE == "startup":
-    initialize_models(init_tts=True, init_asr=True)
+    initialize_models(init_tts=True, init_asr=ENABLE_STT)
     if KOKORO_ONNX_MODE == "piper" and PIPER_PREFETCH_ON_STARTUP:
         _resolve_piper_model_and_config()
 
@@ -583,7 +630,7 @@ def restore_punctuation(text, max_words=120):
 def normalize_tech_text(text):
     """
     Normalize spoken "tech" tokens (dot/com/slash/etc.) into symbols.
-    Intended for wav2vec2 output; Whisper already handles this better.
+    Intended for Wav2Vec2 output; Moonshine already provides casing and punctuation.
     """
     normalized = text
 
@@ -787,6 +834,13 @@ def transcribe_audio():
     request_id = str(uuid.uuid4())[:8]
     start_time = time.monotonic()
     logger.info(f"[{request_id}] /transcribe_audio request received")
+    if not ENABLE_STT:
+        logger.info(f"[{request_id}] STT request rejected because STT is disabled")
+        return jsonify({
+            "status": "error",
+            "code": "stt_disabled",
+            "message": "Speech-to-text is disabled on this service.",
+        }), 503
     acquired = global_lock.acquire(timeout=REQUEST_LOCK_TIMEOUT_SEC)
     if not acquired:
         logger.warning(
@@ -869,6 +923,28 @@ def transcribe_audio():
                 f"rate={sampling_rate} duration={duration_sec:.2f}s engine={ASR_ENGINE}"
             )
 
+            speech_timestamps = get_speech_timestamps(
+                torch.from_numpy(np.asarray(audio_array, dtype=np.float32)),
+                vad_model,
+                sampling_rate=sampling_rate,
+                threshold=VAD_THRESHOLD,
+                min_speech_duration_ms=VAD_MIN_SPEECH_MS,
+            )
+            speech_duration_sec = sum(
+                segment["end"] - segment["start"] for segment in speech_timestamps
+            ) / sampling_rate
+            if not speech_timestamps:
+                logger.info(f"[{request_id}] VAD found no speech in {duration_sec:.2f}s input")
+                return jsonify({
+                    "status": "error",
+                    "code": "no_speech_detected",
+                    "message": "No speech detected. Please speak clearly and try again.",
+                }), 422
+            logger.info(
+                f"[{request_id}] VAD detected {len(speech_timestamps)} speech segment(s), "
+                f"{speech_duration_sec:.2f}s total"
+            )
+
             if ASR_ENGINE == "wav2vec2_onnx" and 'asr_session' in globals() and asr_session is not None:
                 asr_start = time.monotonic()
                 # Prepare input for Wav2Vec2 ONNX: float32 PCM, shape (batch, samples)
@@ -896,23 +972,34 @@ def transcribe_audio():
                     f"[{request_id}] ASR (Wav2Vec2 ONNX) complete in {asr_elapsed:.2f}s "
                     f"(chars={len(transcription)})"
                 )
-            else:
+            elif ASR_ENGINE == "moonshine" and asr_transcriber is not None:
                 asr_start = time.monotonic()
-                # Whisper fallback
-                input_features = processor(
+                transcript_result = asr_transcriber.transcribe_without_streaming(
                     audio_array,
-                    sampling_rate=sampling_rate,
-                    return_tensors="pt"
-                ).input_features
-
-                logger.debug("Generating transcription (Whisper)...")
-                predicted_ids = whisper_model.generate(input_features)
-                transcription = processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
+                    sample_rate=sampling_rate,
+                    flags=0,
+                )
+                transcription = " ".join(
+                    line.text.strip()
+                    for line in transcript_result.lines
+                    if line.text.strip()
+                )
                 asr_elapsed = time.monotonic() - asr_start
                 logger.info(
-                    f"[{request_id}] ASR (Whisper) complete in {asr_elapsed:.2f}s "
+                    f"[{request_id}] ASR (Moonshine) complete in {asr_elapsed:.2f}s "
                     f"(chars={len(transcription)})"
                 )
+            else:
+                raise RuntimeError(f"ASR engine {ASR_ENGINE!r} is not initialized")
+
+            transcription = transcription.strip()
+            if not transcription:
+                logger.info(f"[{request_id}] ASR returned an empty transcription")
+                return jsonify({
+                    "status": "error",
+                    "code": "empty_transcription",
+                    "message": "Speech was detected, but it could not be transcribed. Please try again.",
+                }), 422
 
             if PUNCTUATE_TEXT:
                 try:
