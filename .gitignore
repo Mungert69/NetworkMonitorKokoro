@@ -362,3 +362,7 @@ venv
 /.qwen/
 /.gemini/
 /.pi/
+
+# Deployment-only HAL 9000 (no denoise) voice; license unspecified
+/kokoro_model/piper_repo/alt-hal.onnx
+/kokoro_model/piper_repo/alt-hal.onnx.json

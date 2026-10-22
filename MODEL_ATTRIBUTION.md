@@ -9,12 +9,12 @@ This file records provenance and licensing information to the best of our
 knowledge. Verify the current terms with the upstream sources before
 redistributing or using a model commercially.
 
-## Models vendored in this repository
+## Piper voices
 
 ### HAL 9000 (no denoise) — English (EN), Medium
 
-- **Files:** `kokoro_model/piper_repo/alt-hal.onnx`,
-  `kokoro_model/piper_repo/alt-hal.onnx.json`
+- **Files:** deployment-only at `kokoro_model/piper_repo/alt-hal.onnx` and
+  `alt-hal.onnx.json` (excluded from git; see `.gitignore`)
 - **Voice creator:** dividebysandwich
 - **Catalog listing:** <https://piperhub.org/model/hal-9000-no-denoise-english-en-medium/>
   (retrieved 2026-10-22)
@@ -23,10 +23,11 @@ redistributing or using a model commercially.
 - **License declared by publisher:** **Not specified.** The Hugging Face
   repository has no license metadata, and the PiperHub listing states
   "License: not specified".
-- **Usage note:** This voice is included for personal and experimental
-  evaluation only. It is **not** represented as cleared for redistribution or
-  commercial use. Contact the voice creator/uploader for licensing terms. If
-  you are a rights holder and want this file removed, please open an issue.
+- **Usage note:** This voice is **not included in this repository** and is
+  deployed locally for personal and experimental evaluation only. It is **not**
+  represented as cleared for redistribution or commercial use. Contact the
+  voice creator/uploader for licensing terms. If you are a rights holder and
+  want this file removed, please open an issue.
 - **Technical details:** Piper voice format (`piper_version` 1.0.0), 1 speaker,
   `en-us` phonemes, 22,050 Hz, medium quality.
 
@@ -85,7 +86,8 @@ redistributing or using a model commercially.
 
 ## Notes
 
-- Model files may be large; the vendored ONNX file is stored using Git LFS.
+- No model weights are stored in this repository. Git LFS is configured for
+  `*.onnx` in case model assets are added in the future.
 - If you redistribute this repository, keep this file and comply with each
   model's terms.
 - Corrections and attribution updates are welcome via an issue or pull request.
