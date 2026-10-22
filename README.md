@@ -338,6 +338,8 @@ python3 app.py
   - T2S supports both Kokoro ONNX and Piper voices:
     - Kokoro default source: `onnx-community/Kokoro-82M-v1.0-ONNX`
     - Piper default source (auto-download when missing): `campwill/HAL-9000-Piper-TTS`
+    - Vendored alternate voice: `kokoro_model/piper_repo/alt-hal.onnx` (HAL 9000 no-denoise)
+  - Model provenance and licenses: see [MODEL_ATTRIBUTION.md](MODEL_ATTRIBUTION.md).
   - S2T defaults to Moonshine Medium Streaming and can be switched to Wav2Vec2 ONNX with `USE_WAV2VEC2=1`.
   - Set `ENABLE_STT=0` on TTS-only deployments to skip VAD and speech-recognition model initialization.
 - Lazy model loading:
