@@ -16,7 +16,7 @@ import threading
 import werkzeug
 import tempfile
 from huggingface_hub import snapshot_download
-from tts_processor import preprocess_all
+from tts_processor import preprocess_all, strip_markdown
 import hashlib
 import shutil
 import os
@@ -586,8 +586,9 @@ def generate_audio():
 
             validate_text_input(text)
 
-            # Use legacy preprocessing for Kokoro ONNX, but raw text for Piper.
-            text_for_tts = text if kokoro_tts_mode == "piper" else preprocess_all(text)
+            # Piper does its own phonemisation, so it only needs markdown removed.
+            # The Kokoro ONNX modes use the full preprocessing pipeline.
+            text_for_tts = strip_markdown(text) if kokoro_tts_mode == "piper" else preprocess_all(text)
             if kokoro_tts_mode == "piper":
                 cache_fingerprint = f"mode=piper|model={PIPER_MODEL_PATH}|config={PIPER_CONFIG_PATH}|speaker={KOKORO_SPEAKER_ID}"
             elif kokoro_tts_mode == "legacy":

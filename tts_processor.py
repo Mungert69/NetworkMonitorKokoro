@@ -414,8 +414,180 @@ def tech_humanize(text):
 
     return text
 
+# Markdown block syntax
+_MD_FENCE = re.compile(r'^\s{0,3}(```|~~~)(.*)$')
+_MD_RULE = re.compile(r'^\s{0,3}([-*_])[ \t]*(?:\1[ \t]*){2,}$')
+_MD_HEADING = re.compile(r'^\s{0,3}#{1,6}[ \t]+')
+_MD_QUOTE = re.compile(r'^\s{0,3}(?:>[ \t]?)+')
+_MD_BULLET = re.compile(r'^\s*[-*+][ \t]+')
+_MD_ORDERED = re.compile(r'^\s*\d{1,9}[.)][ \t]+')
+_MD_TASK = re.compile(r'^\s*\[[ xX]\][ \t]+')
+_MD_SEPARATOR_CELL = re.compile(r'^:?-+:?$')
+
+
+def _split_table_cells(line):
+    """Split a markdown table row into its cell values."""
+    stripped = line.strip()
+    if stripped.startswith('|'):
+        stripped = stripped[1:]
+    if stripped.endswith('|'):
+        stripped = stripped[:-1]
+    return [cell.strip() for cell in stripped.split('|')]
+
+
+def _is_table_separator(line):
+    """True if the line is a markdown table separator row such as |---|---|."""
+    if '|' not in line:
+        return False
+    cells = _split_table_cells(line)
+    if not cells:
+        return False
+    return all(_MD_SEPARATOR_CELL.match(cell) for cell in cells)
+
+
+def _render_table(header, rows):
+    """Render a markdown table as labelled sentences, e.g. 'Host: srv1, Status: up.'"""
+    parts = []
+    for row in rows:
+        cells = []
+        for index, value in enumerate(row):
+            if not value:
+                continue
+            label = header[index] if index < len(header) else ''
+            if label and label.lower() not in value.lower():
+                cells.append(f"{label}: {value}")
+            else:
+                cells.append(value)
+        if cells:
+            parts.append(", ".join(cells))
+    if not parts:
+        return ""
+    return ". ".join(parts) + "."
+
+
+def _replace_markdown_link(match):
+    """Keep the link label and append the URL when it carries extra information."""
+    label = match.group(1).strip()
+    url = match.group(2).strip()
+    if not url:
+        return label
+    if not label:
+        return url
+    if url.lower() in label.lower():
+        return label
+    return f"{label}, {url}"
+
+
+def _strip_inline_markdown(text, escaped):
+    """Remove inline markdown syntax from a single run of text."""
+    # Escaped punctuation first, stashed so emphasis rules cannot touch it
+    text = re.sub(r'\\([\\`*_{}\[\]()#+\-.!>~|])', lambda m: escaped.append(m.group(1)) or f"\x00{len(escaped) - 1}\x00", text)
+    # Inline code spans
+    text = re.sub(r'`+([^`]*)`+', r'\1', text)
+    # Images carry no spoken content
+    text = re.sub(r'!\[[^\]]*\]\([^)]*\)', '', text)
+    # Links: [label](url)
+    text = re.sub(r'\[([^\]]*)\]\(([^)\s]*)(?:\s+"[^"]*")?\)', _replace_markdown_link, text)
+    # Reference links: [label][ref]
+    text = re.sub(r'\[([^\]]*)\]\[[^\]]*\]', r'\1', text)
+    # Autolinks: <https://example.com>
+    text = re.sub(r'<((?:https?|mailto):[^>\s]+)>', r'\1', text)
+    # HTML tags
+    text = re.sub(r'</?[a-zA-Z][^>]*>', '', text)
+    # Heading markers that do not start a line, e.g. "**Bold** ## Heading"
+    text = re.sub(r'(?<!\S)#{1,6}[ \t]+', '', text)
+    # Strikethrough
+    text = re.sub(r'~~(.+?)~~', r'\1', text)
+    # Bold
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'(?<!\w)__(.+?)__(?!\w)', r'\1', text)
+    # Italic
+    text = re.sub(r'(?<!\w)\*([^*\n]+)\*(?!\w)', r'\1', text)
+    text = re.sub(r'(?<!\w)_([^_\n]+)_(?!\w)', r'\1', text)
+    return text
+
+
+def strip_markdown(string):
+    """
+    Remove markdown syntax so the text reads naturally when spoken.
+
+    Handles headings, lists, blockquotes, tables, code fences, links, images,
+    emphasis and horizontal rules. Tables are rendered as labelled sentences
+    rather than dropped, because the row and column names are the content.
+    """
+    if not string:
+        return string
+
+    escaped = []
+    lines = string.replace('\r\n', '\n').replace('\r', '\n').split('\n')
+    output = []
+    in_code_block = False
+    index = 0
+
+    while index < len(lines):
+        line = lines[index]
+
+        if in_code_block:
+            if _MD_FENCE.match(line):
+                in_code_block = False
+            else:
+                output.append(line)
+            index += 1
+            continue
+
+        fence = _MD_FENCE.match(line)
+        if fence:
+            in_code_block = True
+            index += 1
+            continue
+
+        # Table: a header row followed by a separator row
+        if '|' in line and index + 1 < len(lines) and _is_table_separator(lines[index + 1]):
+            header = _split_table_cells(line)
+            index += 2
+            rows = []
+            while index < len(lines) and '|' in lines[index] and lines[index].strip():
+                rows.append(_split_table_cells(lines[index]))
+                index += 1
+            rendered = _render_table(header, rows)
+            if rendered:
+                output.append(rendered)
+            continue
+
+        # Orphaned separator row, e.g. a table header that was never rendered
+        if _is_table_separator(line):
+            index += 1
+            continue
+
+        # Horizontal rule
+        if _MD_RULE.match(line):
+            index += 1
+            continue
+
+        # Heading
+        line = _MD_HEADING.sub('', line)
+
+        # Blockquote
+        line = _MD_QUOTE.sub('', line)
+
+        # List markers, including task list checkboxes
+        line = _MD_BULLET.sub('', line)
+        line = _MD_ORDERED.sub('', line)
+        line = _MD_TASK.sub('', line)
+
+        output.append(line)
+        index += 1
+
+    text = _strip_inline_markdown("\n".join(output), escaped)
+
+    # Restore escaped punctuation
+    text = re.sub(r'\x00(\d+)\x00', lambda m: escaped[int(m.group(1))], text)
+
+    return text
+
 # Main preprocessing pipeline
 def preprocess_all(string):
+    string = strip_markdown(string)
     string = normalize_dates(string)
     string = replace_invalid_chars(string)
     string = replace_numbers(string)
