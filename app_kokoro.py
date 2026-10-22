@@ -27,7 +27,11 @@ import onnxruntime as ort
 # ---------------------------
 # THREAD LIMIT CONFIG
 # ---------------------------
-MAX_THREADS = 2  # <-- change this number to control all thread usage
+try:
+    AVAILABLE_CPU_COUNT = len(os.sched_getaffinity(0))
+except (AttributeError, OSError):
+    AVAILABLE_CPU_COUNT = os.cpu_count() or 1
+MAX_THREADS = max(1, int(os.environ.get("MAX_THREADS", str(AVAILABLE_CPU_COUNT))))
 
 # Limit NumPy / BLAS / MKL threads
 os.environ["OMP_NUM_THREADS"] = str(MAX_THREADS)
@@ -694,6 +698,7 @@ def transcribe_audio():
             conversion_command = [
                 'ffmpeg',
                 '-y',                  # Force overwrite without prompting
+                '-filter_threads', str(AVAILABLE_CPU_COUNT),
                 '-i', input_audio_path,
                 '-acodec', 'pcm_s16le', # 16-bit PCM
                 '-ac', '1',             # mono

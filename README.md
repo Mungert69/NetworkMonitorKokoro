@@ -333,7 +333,7 @@ python3 app.py
 
 ## Operational Details
 
-- Concurrency: the app uses a global lock so only one synthesis/transcription runs at a time. Internal math libraries, PyTorch, and ONNX Runtime use the configurable thread count in `MAX_THREADS` (default `2`).
+- Concurrency: the app uses a global lock so only one synthesis/transcription runs at a time. PyTorch and app-managed ONNX Runtime sessions use `MAX_THREADS`, which defaults to all CPUs available to the process. Piper's separate ONNX Runtime session uses its runtime default thread pool, which can use available CPUs. STT ffmpeg filtering is configured with `-filter_threads` for all CPUs available to the process; actual parallel use depends on the input and filters.
 - Models:
   - T2S supports both Kokoro ONNX and Piper voices:
     - Kokoro default source: `onnx-community/Kokoro-82M-v1.0-ONNX`
