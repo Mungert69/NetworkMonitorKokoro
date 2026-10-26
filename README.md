@@ -86,7 +86,7 @@ Ensure you have the following installed:
      - Ensure system dependencies from `install.sh` are already present on the machine (`espeak`, `libsndfile1`, `ffmpeg`, `curl`, `tar` on Linux).
      - Then do Python-only setup:
      ```bash
-     cd ~/code/services/kokoro
+     cd ~/code/NetworkMonitorKokoro
      python3 -m venv venv
      source venv/bin/activate
      python3 install_dependencies.py

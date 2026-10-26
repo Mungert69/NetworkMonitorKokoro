@@ -9,6 +9,7 @@ COMMON_REQUIREMENTS = [
     "gunicorn",
     "transformers",
     "librosa",
+    "moonshine-voice==0.1.5",
     "numpy",
     "soundfile",
     "huggingface_hub",
@@ -20,7 +21,6 @@ COMMON_REQUIREMENTS = [
     "inflect",
     "ftfy",
     "sentencepiece",
-    "moonshine-voice",
 ]
 
 
@@ -39,7 +39,7 @@ def install_python_deps(choice):
             install_package(req)
         install_package("torch", ["--index-url", "https://download.pytorch.org/whl/cpu"])
         install_package("onnxruntime")
-        install_package("silero-vad")
+        install_package("silero-vad==6.2.3")
     elif choice == "2":
         print("\nInstalling Python dependencies for GPU...")
         for req in COMMON_REQUIREMENTS:
@@ -47,7 +47,7 @@ def install_python_deps(choice):
             install_package(req)
         install_package("torch")
         install_package("onnxruntime-gpu")
-        install_package("silero-vad")
+        install_package("silero-vad==6.2.3")
     else:
         raise ValueError("Invalid install mode")
 
