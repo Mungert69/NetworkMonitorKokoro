@@ -21,6 +21,7 @@ You can see the script in action with the Quantum Network Monitor Assistant at [
 - **T2S (Text-to-Speech)**
   - High-quality voice synthesis using Kokoro ONNX (`KOKORO_ONNX_MODE=legacy` or `stts2`).
   - Piper voice synthesis mode (`KOKORO_ONNX_MODE=piper`) for models like HAL-9000.
+  - Lightweight tiny-voca ONNX synthesis with English F2 and M2 voices (`KOKORO_ONNX_MODE=tiny-voca`).
   - Configurable speaker/style controls depending on backend.
 
 - **S2T (Speech-to-Text)**
@@ -95,7 +96,7 @@ Ensure you have the following installed:
 
 4. **Set up the models**:
    - The Kokoro T2S model is downloaded automatically on first run.
-   - In tiny-voca mode, the ONNX graph and phonemizer data are downloaded automatically on first run.
+   - In tiny-voca mode, the ONNX graph and phonemizer data are downloaded automatically on first run. The installer also installs tiny-voca's `dizione` phonemizer (Python 3.10+ required).
    - In Piper mode, model/config files are also auto-downloaded on first run (default: `campwill/HAL-9000-Piper-TTS`) if missing.
    - For ASR (S2T), the app downloads the selected Moonshine model on first run. Wav2Vec2 ONNX is also available; see "ASR Engines" below.
 
@@ -307,7 +308,7 @@ To run **NetworkMonitorKokoro** as a systemd service on Linux, follow these step
   - Requires Piper binary (`PIPER_BIN`, default `piper`).
   - Uses `PIPER_MODEL_PATH` and `PIPER_CONFIG_PATH`.
 - `KOKORO_ONNX_MODE=tiny-voca`:
-  - Downloads and runs `n4ze3m/tiny-voca` through ONNX Runtime; this is opt-in and does not change the existing default.
+  - Downloads and runs `n4ze3m/tiny-voca` through ONNX Runtime. Select this mode explicitly; the general app default remains `auto` for existing Kokoro ONNX models.
   - Downloads the ONNX graph and phonemizer assets, and uses the `dizione` phonemizer.
   - Requires Python 3.10 or newer. `TINY_VOCA_REPO_ID` and `TINY_VOCA_MODEL_DIR` can override the model source and download folder.
   - Set `TINY_VOCA_VOICE=F2` or `M2` (default `F2`). Optional settings: `TINY_VOCA_SPEED`, `TINY_VOCA_PITCH_SHIFT`, and `TINY_VOCA_PITCH_RANGE`.
@@ -332,11 +333,22 @@ python3 app.py
 
 ### Example: tiny-voca mode
 
+Set the mode before starting the service. When tiny-voca initializes (on the first TTS request in lazy mode), the model and phonemizer assets are fetched from Hugging Face and cached locally. Use `F2` (default) or `M2` for the voice:
+
 ```bash
 export KOKORO_ONNX_MODE=tiny-voca
 export TINY_VOCA_VOICE=M2
 python3 app.py
 ```
+
+The same environment variables can be added to your systemd service with `Environment=` entries. For example:
+
+```ini
+Environment=KOKORO_ONNX_MODE=tiny-voca
+Environment=TINY_VOCA_VOICE=M2
+```
+
+Then restart the service. Requests continue to use the standard `/generate_audio` endpoint.
 
 #### 3. **Serve Audio Files**
 - **Endpoint**: `/files/<filename>`
@@ -353,6 +365,7 @@ python3 app.py
 - Models:
   - T2S supports both Kokoro ONNX and Piper voices:
     - Kokoro default source: `onnx-community/Kokoro-82M-v1.0-ONNX`
+    - tiny-voca source: `n4ze3m/tiny-voca` (selected with `KOKORO_ONNX_MODE=tiny-voca`)
     - Piper default source (auto-download when missing): `campwill/HAL-9000-Piper-TTS`
     - Optional alternate voice (deployment-only, not committed): `kokoro_model/piper_repo/alt-hal.onnx` (HAL 9000 no-denoise)
   - Model provenance and licenses: see [MODEL_ATTRIBUTION.md](MODEL_ATTRIBUTION.md).
