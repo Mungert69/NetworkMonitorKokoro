@@ -12,6 +12,7 @@ import re
 import threading
 import time
 import werkzeug
+from werkzeug.exceptions import RequestEntityTooLarge
 import tempfile
 import subprocess
 from pathlib import Path
@@ -67,6 +68,9 @@ if not ENABLE_STT:
     logger.info("Speech-to-text is disabled by ENABLE_STT=0")
 
 app = Flask(__name__)
+# Leave room for multipart boundaries and form headers around the 10 MB file cap.
+MAX_AUDIO_UPLOAD_BYTES = 10 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = MAX_AUDIO_UPLOAD_BYTES + 1024 * 1024
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Global lock to ensure one method runs at a time
@@ -106,7 +110,7 @@ def validate_audio_file(file):
     file_size = file.tell()
     file.seek(0)  # Reset file pointer
     
-    max_size = 10 * 1024 * 1024  # 10 MB
+    max_size = MAX_AUDIO_UPLOAD_BYTES
     if file_size > max_size:
         raise ValueError(f"File is too large (max {max_size//(1024*1024)} MB)")
     
@@ -859,12 +863,18 @@ def transcribe_audio():
     try:
         logger.info(f"[{request_id}] /transcribe_audio lock acquired")
         try:
-            ensure_models_for_asr()
             if 'file' not in request.files:
                 logger.warning(f"[{request_id}] No audio file part in request")
                 return jsonify({"status": "error", "message": "Missing file field 'file'"}), 400
             file = request.files['file']
-            validate_audio_file(file)
+            try:
+                validate_audio_file(file)
+            except ValueError as e:
+                logger.info(f"[{request_id}] Rejected invalid STT upload: {e}")
+                return jsonify({"status": "error", "message": str(e)}), 400
+
+            # Validate the request before loading potentially large ASR models.
+            ensure_models_for_asr()
             logger.info(
                 f"[{request_id}] STT input accepted: name={file.filename!r} "
                 f"content_type={file.content_type!r}"
@@ -1025,6 +1035,12 @@ def transcribe_audio():
                 preview += "..."
             logger.info(f"[{request_id}] STT transcription preview: {preview}")
             return jsonify({"status": "success", "transcription": transcription})
+        except RequestEntityTooLarge:
+            logger.info(f"[{request_id}] Rejected STT request exceeding the upload limit")
+            return jsonify({
+                "status": "error",
+                "message": "Request is too large. Maximum audio file size is 10 MB.",
+            }), 413
         except Exception as e:
             elapsed = time.monotonic() - start_time
             logger.exception(f"[{request_id}] Error transcribing audio after {elapsed:.2f}s: {str(e)}")
