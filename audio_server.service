@@ -20,8 +20,8 @@ Environment=SERVE_DIR=/home/audioservice/app/files
 Environment=ENABLE_STT=1
 Environment=ASR_ENGINE=moonshine
 Environment=MOONSHINE_MODEL_ARCH=medium-streaming
-Environment=KOKORO_ONNX_MODE=legacy
-Environment=KOKORO_SPEAKER_ID=0
+Environment=KOKORO_ONNX_MODE=tiny-voca
+Environment=TINY_VOCA_VOICE=M2
 Environment=MODEL_INIT_MODE=startup
 [Install]
 WantedBy=multi-user.target

@@ -51,6 +51,12 @@ def install_python_deps(choice):
     else:
         raise ValueError("Invalid install mode")
 
+    if sys.version_info >= (3, 10):
+        print("Installing the tiny-voca phonemizer dependency...")
+        install_package("git+https://github.com/n4ze3m/dizione")
+    else:
+        print("Skipping tiny-voca phonemizer: this model requires Python 3.10 or newer.")
+
 
 def main():
     print("Detecting operating system...")
