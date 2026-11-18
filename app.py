@@ -159,7 +159,7 @@ ASR_ONNX_REPO = os.environ.get("ASR_ONNX_REPO", "onnx-community/wav2vec2-base-96
 PUNCTUATE_TEXT = os.environ.get("PUNCTUATE_TEXT", "0").lower() in {"1", "true", "yes", "on"}
 TECH_NORMALIZE = os.environ.get("TECH_NORMALIZE", "0").lower() in {"1", "true", "yes", "on"}
 PUNCTUATION_MODEL = os.environ.get("PUNCTUATION_MODEL", "kredor/punctuate-all")
-KOKORO_ONNX_MODE = os.environ.get("KOKORO_ONNX_MODE", "auto").lower()  # auto | legacy | stts2 | piper
+KOKORO_ONNX_MODE = os.environ.get("KOKORO_ONNX_MODE", "auto").lower()  # auto | legacy | stts2 | piper | tiny-voca
 KOKORO_SPEAKER_ID = int(os.environ.get("KOKORO_SPEAKER_ID", "0"))
 KOKORO_MAX_PHONEME_TOKENS = int(os.environ.get("KOKORO_MAX_PHONEME_TOKENS", "510"))
 KOKORO_STTS2_NOISE_SCALE = float(os.environ.get("KOKORO_STTS2_NOISE_SCALE", "0.667"))
@@ -173,6 +173,13 @@ PIPER_REPO_ID = os.environ.get("PIPER_REPO_ID", "campwill/HAL-9000-Piper-TTS")
 PIPER_REPO_MODEL_FILE = os.environ.get("PIPER_REPO_MODEL_FILE", "hal.onnx")
 PIPER_REPO_CONFIG_FILE = os.environ.get("PIPER_REPO_CONFIG_FILE", "hal.onnx.json")
 PIPER_DOWNLOAD_DIR = os.environ.get("PIPER_DOWNLOAD_DIR", os.path.join(model_path, "piper_repo"))
+TINY_VOCA_REPO_ID = os.environ.get("TINY_VOCA_REPO_ID", "n4ze3m/tiny-voca")
+TINY_VOCA_MODEL_DIR = os.environ.get("TINY_VOCA_MODEL_DIR", "tiny_voca_model")
+TINY_VOCA_VOICE = os.environ.get("TINY_VOCA_VOICE", "F2").upper()
+TINY_VOCA_SPEED = float(os.environ.get("TINY_VOCA_SPEED", "1.0"))
+TINY_VOCA_PITCH_SHIFT = float(os.environ.get("TINY_VOCA_PITCH_SHIFT", "0.0"))
+TINY_VOCA_PITCH_RANGE = float(os.environ.get("TINY_VOCA_PITCH_RANGE", "1.0"))
+TINY_VOCA_MAX_TOKENS = int(os.environ.get("TINY_VOCA_MAX_TOKENS", "512"))
 MODEL_INIT_MODE = os.environ.get("MODEL_INIT_MODE", "lazy").lower()  # lazy | startup
 PIPER_PREFETCH_ON_STARTUP = os.environ.get("PIPER_PREFETCH_ON_STARTUP", "0").lower() in {"1", "true", "yes", "on"}
 REQUEST_LOCK_TIMEOUT_SEC = float(os.environ.get("REQUEST_LOCK_TIMEOUT_SEC", "15"))
@@ -259,6 +266,34 @@ def initialize_models(init_tts=True, init_asr=True):
                 sess = None
                 kokoro_input_names = set()
                 kokoro_tts_mode = "piper"
+            elif KOKORO_ONNX_MODE == "tiny-voca":
+                if sys.version_info < (3, 10):
+                    raise RuntimeError("tiny-voca mode requires Python 3.10 or newer")
+                if TINY_VOCA_VOICE not in {"F2", "M2"}:
+                    raise ValueError("TINY_VOCA_VOICE must be F2 or M2")
+                tiny_voca_dir = snapshot_download(
+                    TINY_VOCA_REPO_ID,
+                    local_dir=TINY_VOCA_MODEL_DIR,
+                    allow_patterns=["onnx/model.onnx", "config.json", "phonemizer/**"],
+                    resume_download=True,
+                )
+                onnx_path = os.path.join(tiny_voca_dir, "onnx", "model.onnx")
+                tiny_voca_data = os.path.join(tiny_voca_dir, "phonemizer")
+                if not os.path.isfile(onnx_path):
+                    raise FileNotFoundError(f"tiny-voca ONNX model not found at {onnx_path}")
+                if not os.path.isdir(tiny_voca_data):
+                    raise FileNotFoundError(f"tiny-voca phonemizer data not found at {tiny_voca_data}")
+                os.environ["DIZIONE_DATA"] = tiny_voca_data
+                import dizione
+
+                sess = InferenceSession(onnx_path, sess_options)
+                kokoro_input_names = {i.name for i in sess.get_inputs()}
+                required_inputs = {"tokens", "stress", "voice", "speed", "pitch_shift", "pitch_range"}
+                if not required_inputs.issubset(kokoro_input_names):
+                    raise RuntimeError(
+                        f"Unexpected tiny-voca ONNX inputs: {sorted(kokoro_input_names)}"
+                    )
+                kokoro_tts_mode = "tiny-voca"
             else:
                 kokoro_dir = model_path if os.path.exists(model_path) else None
                 onnx_path = find_onnx(kokoro_dir) if kokoro_dir else None
@@ -288,7 +323,7 @@ def initialize_models(init_tts=True, init_asr=True):
                 elif KOKORO_ONNX_MODE in {"legacy", "stts2"}:
                     kokoro_tts_mode = KOKORO_ONNX_MODE
                 else:
-                    raise ValueError("KOKORO_ONNX_MODE must be one of: auto, legacy, stts2, piper")
+                    raise ValueError("KOKORO_ONNX_MODE must be one of: auto, legacy, stts2, piper, tiny-voca")
 
             logger.info(f"Kokoro ONNX input names: {sorted(kokoro_input_names) if kokoro_input_names else []}")
             logger.info(f"Kokoro ONNX mode: {kokoro_tts_mode}")
@@ -571,6 +606,84 @@ def synthesize_with_piper(text, output_path):
     if not os.path.isfile(output_path) or os.path.getsize(output_path) == 0:
         raise RuntimeError("Piper did not produce an output wav file.")
 
+
+def synthesize_with_tiny_voca(text, output_path):
+    """Synthesize text with tiny-voca's ONNX graph and dizione phonemizer."""
+    import dizione
+
+    if (
+        TINY_VOCA_SPEED <= 0
+        or TINY_VOCA_PITCH_RANGE < 0
+        or not 3 <= TINY_VOCA_MAX_TOKENS <= 512
+    ):
+        raise ValueError("Invalid tiny-voca speed, pitch range, or token limit")
+
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", text.strip()) if part.strip()]
+    if not sentences:
+        raise ValueError("No text to synthesize")
+
+    audio_parts = []
+    voice_id = 0 if TINY_VOCA_VOICE == "F2" else 1
+
+    def synthesize_chunk(chunk):
+        phones = dizione.phonemize(chunk)
+        tokens = np.asarray([phones.ids], dtype=np.int64)
+        stress = np.asarray([phones.stress], dtype=np.int64)
+        if tokens.shape[1] > TINY_VOCA_MAX_TOKENS:
+            raise ValueError("tiny-voca phoneme sequence exceeds the configured token limit")
+        outputs = sess.run(None, {
+            "tokens": tokens,
+            "stress": stress,
+            "voice": np.asarray([voice_id], dtype=np.int64),
+            "speed": np.asarray([TINY_VOCA_SPEED], dtype=np.float32),
+            "pitch_shift": np.asarray([TINY_VOCA_PITCH_SHIFT], dtype=np.float32),
+            "pitch_range": np.asarray([TINY_VOCA_PITCH_RANGE], dtype=np.float32),
+        })
+        predicted_frames = int(np.asarray(outputs[1]).sum())
+        if predicted_frames > 3000:
+            words = chunk.split()
+            if len(words) < 2:
+                raise ValueError("A tiny-voca utterance exceeds the 32-second frame limit")
+            split_at = len(words) // 2
+            first = " ".join(words[:split_at]).rstrip(".,;:") + ","
+            second = " ".join(words[split_at:])
+            synthesize_chunk(first)
+            synthesize_chunk(second)
+            return
+        audio_parts.append(np.squeeze(outputs[0]).astype(np.float32))
+
+    for sentence in sentences:
+        if sentence[-1] not in ".!?;:":
+            sentence += "."
+
+        # Keep each ONNX call under the model's token limit. Split long
+        # sentences at word boundaries and add a short pause at each split.
+        chunks = []
+        current = ""
+        for word in sentence.split():
+            candidate = f"{current} {word}".strip()
+            phones = dizione.phonemize(candidate)
+            if len(phones.ids) <= TINY_VOCA_MAX_TOKENS:
+                current = candidate
+                continue
+            if not current:
+                raise ValueError("A single word exceeds tiny-voca's token limit")
+            chunks.append(current.rstrip(".,;:") + ",")
+            current = word
+        if current:
+            chunks.append(current)
+
+        for chunk in chunks:
+            synthesize_chunk(chunk)
+
+    if not audio_parts:
+        raise RuntimeError("tiny-voca produced no audio for the supplied text")
+    audio = np.concatenate(audio_parts)
+    peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+    if peak > 0.99:
+        audio *= 0.99 / peak
+    sf.write(output_path, audio, 24000)
+
 def restore_punctuation(text, max_words=120):
     if not PUNCTUATE_TEXT:
         return text
@@ -749,11 +862,16 @@ def generate_audio():
 
             validate_text_input(text)
 
-            # Piper does its own phonemisation, so it only needs markdown removed.
-            # The Kokoro ONNX modes use the full preprocessing pipeline.
+            # Piper does its own phonemisation; the other engines use the normal
+            # preprocessing pipeline before their engine-specific phonemizer.
             text_for_tts = strip_markdown(text) if kokoro_tts_mode == "piper" else preprocess_all(text)
             if kokoro_tts_mode == "piper":
                 cache_fingerprint = f"mode=piper|model={PIPER_MODEL_PATH}|config={PIPER_CONFIG_PATH}|speaker={KOKORO_SPEAKER_ID}"
+            elif kokoro_tts_mode == "tiny-voca":
+                cache_fingerprint = (
+                    f"mode=tiny-voca|repo={TINY_VOCA_REPO_ID}|voice={TINY_VOCA_VOICE}|"
+                    f"speed={TINY_VOCA_SPEED}|pitch={TINY_VOCA_PITCH_SHIFT}|range={TINY_VOCA_PITCH_RANGE}"
+                )
             elif kokoro_tts_mode == "legacy":
                 cache_fingerprint = f"mode=legacy|voice={voice_name}"
             else:
@@ -772,6 +890,8 @@ def generate_audio():
 
             if kokoro_tts_mode == "piper":
                 synthesize_with_piper(text_for_tts, cached_file_path)
+            elif kokoro_tts_mode == "tiny-voca":
+                synthesize_with_tiny_voca(text_for_tts, cached_file_path)
             else:
                 # Tokenize
                 from kokoro import phonemize, tokenize  # lazy import is fine

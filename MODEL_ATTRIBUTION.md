@@ -55,6 +55,15 @@ redistributing or using a model commercially.
   (Apache-2.0)
 - **Default voice:** `am_adam`
 
+### tiny-voca (ONNX)
+
+- **Files:** downloaded at runtime to `tiny_voca_model/onnx/model.onnx` with its
+  `config.json` and `phonemizer/` data; not vendored in this repository.
+- **Upstream model:** <https://huggingface.co/n4ze3m/tiny-voca>
+- **License:** Apache-2.0 for the model and code. The bundled phonemizer data
+  includes separate license notices that remain with the downloaded files.
+- **Voices:** F2 and M2, English, 24 kHz mono.
+
 ### Moonshine (ASR)
 
 - **Default engine:** Moonshine Medium Streaming (`moonshine-voice` 0.1.5,

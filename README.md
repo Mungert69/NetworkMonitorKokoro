@@ -7,6 +7,7 @@ NetworkMonitorKokoro is a Flask-based service that provides advanced text-to-spe
 - **Text-to-Speech (T2S)**:
   - Kokoro ONNX (legacy and StyleTTS2-like ONNX signatures)
   - Piper-compatible ONNX voices (for example HAL-9000)
+  - tiny-voca ONNX (English F2/M2 voices)
 - **Speech-to-Text (S2T)**: Transcribes audio files using Moonshine Voice, with an optional Wav2Vec2 ONNX backend.
 
 This repository leverages ONNX for efficient inference and Hugging Face's model hub for seamless model downloads.
@@ -29,7 +30,7 @@ You can see the script in action with the Quantum Network Monitor Assistant at [
   - Handles a wide range of audio inputs.
 
 - **Automatic Model Management**
-  - Models are automatically downloaded from the Hugging Face Hub if not present locally.
+  - Kokoro, tiny-voca, and Piper assets are automatically downloaded from the Hugging Face Hub when their mode is selected and the assets are missing.
 
 - **Flask API Endpoints**
   - `/generate_audio`: Convert text into speech and cache by text hash.
@@ -94,6 +95,7 @@ Ensure you have the following installed:
 
 4. **Set up the models**:
    - The Kokoro T2S model is downloaded automatically on first run.
+   - In tiny-voca mode, the ONNX graph and phonemizer data are downloaded automatically on first run.
    - In Piper mode, model/config files are also auto-downloaded on first run (default: `campwill/HAL-9000-Piper-TTS`) if missing.
    - For ASR (S2T), the app downloads the selected Moonshine model on first run. Wav2Vec2 ONNX is also available; see "ASR Engines" below.
 
@@ -304,6 +306,12 @@ To run **NetworkMonitorKokoro** as a systemd service on Linux, follow these step
   - Uses Piper CLI to synthesize from a Piper ONNX voice model.
   - Requires Piper binary (`PIPER_BIN`, default `piper`).
   - Uses `PIPER_MODEL_PATH` and `PIPER_CONFIG_PATH`.
+- `KOKORO_ONNX_MODE=tiny-voca`:
+  - Downloads and runs `n4ze3m/tiny-voca` through ONNX Runtime; this is opt-in and does not change the existing default.
+  - Downloads the ONNX graph and phonemizer assets, and uses the `dizione` phonemizer.
+  - Requires Python 3.10 or newer. `TINY_VOCA_REPO_ID` and `TINY_VOCA_MODEL_DIR` can override the model source and download folder.
+  - Set `TINY_VOCA_VOICE=F2` or `M2` (default `F2`). Optional settings: `TINY_VOCA_SPEED`, `TINY_VOCA_PITCH_SHIFT`, and `TINY_VOCA_PITCH_RANGE`.
+  - Produces 24 kHz WAV output and splits longer text at sentence and word boundaries to fit the model's token limit (default `TINY_VOCA_MAX_TOKENS=512`).
 
 ### Example: Kokoro mode
 
@@ -319,6 +327,14 @@ export KOKORO_ONNX_MODE=piper
 export PIPER_BIN=/usr/local/bin/piper
 export PIPER_MODEL_PATH=kokoro_model/onnx/model.onnx
 export PIPER_CONFIG_PATH=kokoro_model/onnx/model.onnx.json
+python3 app.py
+```
+
+### Example: tiny-voca mode
+
+```bash
+export KOKORO_ONNX_MODE=tiny-voca
+export TINY_VOCA_VOICE=M2
 python3 app.py
 ```
 
@@ -393,6 +409,7 @@ curl -sX POST \
 - [Moonshine Voice](https://pypi.org/project/moonshine-voice/) (default English ASR backend)
 - [Silero VAD](https://github.com/snakers4/silero-vad) (speech activity detection before ASR)
 - [ONNX Runtime](https://onnxruntime.ai/)
+- [dizione](https://github.com/n4ze3m/dizione) (tiny-voca English phonemization)
 - [Librosa](https://librosa.org/)
 - [SoundFile](https://pysoundfile.readthedocs.io/)
 - [Flask](https://flask.palletsprojects.com/)
